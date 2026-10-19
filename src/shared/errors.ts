@@ -1,0 +1,26 @@
+// Every error Flows raises on purpose, so callers can tell them apart without matching message text.
+export class FlowsError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = new.target.name;
+  }
+}
+
+export class ConfigError extends FlowsError {}
+
+// A remote service (LLM, embeddings, model download) failed, timed out or refused.
+export class ProviderError extends FlowsError {
+  readonly status: number | undefined;
+
+  constructor(message: string, status?: number, options?: ErrorOptions) {
+    super(message, options);
+    this.status = status;
+  }
+}
+
+// Model output that does not match the schema it was asked for.
+export class OutputValidationError extends FlowsError {}
+
+export class ChecksumError extends FlowsError {}
+
+export class DeciderError extends FlowsError {}

@@ -1,0 +1,21 @@
+{
+  "patterns": [
+    {
+      "id": "api-call",
+      "rule": {
+        "pattern": "fetch($$$ARGS)"
+      }
+    },
+    {
+      "id": "api-call",
+      "rule": {
+        "pattern": "axios.$M($$$ARGS)"
+      },
+      "constraints": {
+        "M": {
+          "regex": "^(get|post|put|patch|delete|head|options|request)$"
+        }
+      }
+    }
+  ]
+}

@@ -37,7 +37,8 @@ export const ProjectConfigSchema = z.object({
   schema_version: z.literal(0),
   id: z.uuid(),
   name: z.string().min(1),
-  repos: z.array(z.object({ path: z.string().min(1), role: RoleSchema })).superRefine((repos, ctx) => {
+  // framework: set by the user when stack detection is wrong; checked against the adapters when used.
+  repos: z.array(z.object({ path: z.string().min(1), role: RoleSchema, framework: z.string().min(1).optional() })).superRefine((repos, ctx) => {
     const seen = new Set<string>();
     repos.forEach((repo, i) => {
       const key = `${repo.role}:${repo.path}`;
@@ -57,6 +58,7 @@ export const ProjectConfigSchema = z.object({
 
 export type ProjectConfig = z.infer<typeof ProjectConfigSchema>;
 export type Role = z.infer<typeof RoleSchema>;
+export type Repo = ProjectConfig['repos'][number];
 export type LlmConfig = ProjectConfig['llm'];
 export type EmbedderConfig = ProjectConfig['embedder'];
 export type OpenAiCompatibleConfig = z.infer<typeof OpenAiCompatibleSchema>;
@@ -93,12 +95,32 @@ export function loadProject(root: string): Project {
   return validate(root, raw);
 }
 
+// Stored relative to the project root so the config still works if the folder moves.
+const repoPath = (project: Project, path: string): string => relative(project.root, resolve(project.root, path)) || '.';
+
 export function addRepo(project: Project, path: string, role: string): Project {
   const absolute = resolve(project.root, path);
   if (!existsSync(absolute) || !statSync(absolute).isDirectory()) throw new ConfigError(`${path} is not a directory`);
-  // Stored relative to the project root so the config still works if the folder moves.
-  const repo = { path: relative(project.root, absolute) || '.', role };
-  const updated = validate(project.root, { ...project.raw, repos: [...project.config.repos, repo] });
+  const updated = validate(project.root, { ...project.raw, repos: [...project.config.repos, { path: repoPath(project, path), role }] });
+  write(updated);
+  return updated;
+}
+
+// The registered repo at `path`; the role is needed only when the folder is registered under both roles.
+export function findRepo(project: Project, path: string, role?: string): Repo {
+  const target = repoPath(project, path);
+  const found = project.config.repos.filter((repo) => repo.path === target && (role === undefined || repo.role === role));
+  if (found.length === 1) return found[0];
+  throw new ConfigError(found.length === 0 ? `${path} is not registered${role === undefined ? '' : ` as ${role}`}` : `${path} is registered as both web and api; give the role`);
+}
+
+// Pins a repo's framework (the caller checks the name against the adapters), or clears the pin with undefined.
+export function setFramework(project: Project, target: Repo, framework: string | undefined): Project {
+  const repos = project.config.repos.map(({ framework: current, ...repo }) => {
+    const pinned = repo.path === target.path && repo.role === target.role ? framework : current;
+    return pinned === undefined ? repo : { ...repo, framework: pinned };
+  });
+  const updated = validate(project.root, { ...project.raw, repos });
   write(updated);
   return updated;
 }

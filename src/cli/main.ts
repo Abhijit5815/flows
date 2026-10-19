@@ -1,11 +1,13 @@
 import { existsSync } from 'node:fs';
 import { basename, join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
-import { addRepo, initProject, loadProject, projectDataDir, storageDir, type Project } from '../config/project.ts';
+import { ADAPTERS, adapterFor } from '../adapters/registry.ts';
+import { addRepo, findRepo, initProject, loadProject, projectDataDir, setFramework, storageDir, type Project, type Repo } from '../config/project.ts';
 import { createDecider } from '../decider/create.ts';
 import { loadBuiltInTasks } from '../decider/task.ts';
 import { CATALOGUE } from '../embeddings/catalogue.ts';
 import { modelDir } from '../embeddings/download.ts';
+import { stackOf } from '../ingest/detect.ts';
 import { FlowsError } from '../shared/errors.ts';
 import type { TraceEvent } from '../trace/event.ts';
 import { readTrace, traceFile } from '../trace/sink.ts';
@@ -14,6 +16,8 @@ const USAGE = `usage: flows <command> [--project <dir>]
   init [--name <name>]                     create .flows/config.json in the project folder
   repo add <path> --role web|api           register a repo folder under a role
   repo list
+  stack                                    the framework found for each repo, and why
+  stack set <path> <framework|auto> [--role web|api]   pin a repo's framework, or go back to detection
   models list                              the embedding model catalogue
   decide <task> <text>                     run the Decider once, all of the task's labels allowed
   trace [--kind decision|llm_call] [--type <task>] [--last <n>] [--json]`;
@@ -69,9 +73,22 @@ function listModels(project: Project): void {
   }
 }
 
+function showStacks(project: Project, repos: readonly Repo[]): void {
+  for (const repo of repos) {
+    const stack = stackOf(project.root, repo);
+    if (values.json) {
+      console.log(JSON.stringify({ ...repo, ...stack }));
+      continue;
+    }
+    console.log(`${repo.role}  ${repo.path}  ${stack.framework ?? 'unknown'}${stack.version ? ` ${stack.version}` : ''}  (${stack.source})`);
+    for (const line of stack.evidence) console.log(`    ${line}`);
+    for (const line of stack.warnings) console.log(`  ! ${line}`);
+  }
+}
+
 async function run(): Promise<void> {
   const [command, sub, ...rest] = positionals;
-  switch (`${command ?? ''} ${command === 'repo' || command === 'models' ? (sub ?? '') : ''}`.trim()) {
+  switch (`${command ?? ''} ${command === 'repo' || command === 'models' || command === 'stack' ? (sub ?? '') : ''}`.trim()) {
     case 'init': {
       const project = initProject(root, values.name ?? basename(root));
       console.log(`created ${join(root, '.flows', 'config.json')} (project ${project.config.id})`);
@@ -87,6 +104,20 @@ async function run(): Promise<void> {
     case 'repo list':
       for (const repo of loadProject(root).config.repos) console.log(`${repo.role}  ${repo.path}`);
       return;
+    case 'stack': {
+      const project = loadProject(root);
+      return showStacks(project, project.config.repos);
+    }
+    case 'stack set': {
+      const [path, name] = rest;
+      if (!path || !name) throw new FlowsError('usage: flows stack set <path> <framework|auto> [--role web|api]');
+      const project = loadProject(root);
+      const framework = name === 'auto' ? undefined : name;
+      // The framework says which role it reads, so --role is only needed for "auto" on a folder with both roles.
+      const repo = findRepo(project, path, values.role ?? ADAPTERS.find((adapter) => adapter.id === framework)?.role);
+      if (framework !== undefined) adapterFor(framework, repo.role);
+      return showStacks(setFramework(project, repo, framework), [{ ...repo, framework }]);
+    }
     case 'models list':
       return listModels(loadProject(root));
     case 'decide': {

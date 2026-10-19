@@ -5,7 +5,7 @@ import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DEFAULT_CATEGORIES } from '../model/category.ts';
 import { ConfigError } from '../shared/errors.ts';
-import { addRepo, apiKey, categories, configFile, initProject, loadProject, storageDir, threshold } from './project.ts';
+import { addRepo, apiKey, categories, configFile, findRepo, initProject, loadProject, setFramework, storageDir, threshold } from './project.ts';
 
 const tmp = mkdtempSync(join(tmpdir(), 'flows-config-'));
 after(() => rmSync(tmp, { recursive: true, force: true }));
@@ -69,6 +69,23 @@ test('repos are stored relative to the project root, one per path and role', () 
   assert.throws(() => addRepo(project, './apps/api', 'api'), isConfigError(/already registered as api/));
   assert.throws(() => addRepo(project, 'apps/web', 'mobile'), isConfigError(/role/));
   assert.throws(() => addRepo(project, 'apps/missing', 'web'), isConfigError(/not a directory/));
+});
+
+test('a repo can pin its framework, and the pin can be cleared', () => {
+  const root = freshRoot();
+  let project = addRepo(addRepo(initProject(root, 'demo'), 'apps/api', 'api'), 'apps/api', 'web');
+  project = setFramework(project, findRepo(project, './apps/api', 'api'), 'express');
+  assert.deepEqual(loadProject(root).config.repos, [
+    { path: 'apps/api', role: 'api', framework: 'express' },
+    { path: 'apps/api', role: 'web' },
+  ]);
+  project = setFramework(project, findRepo(project, 'apps/api', 'api'), undefined);
+  assert.deepEqual(loadProject(root).config.repos, [
+    { path: 'apps/api', role: 'api' },
+    { path: 'apps/api', role: 'web' },
+  ]);
+  assert.throws(() => findRepo(project, 'apps/api'), isConfigError(/registered as both web and api/));
+  assert.throws(() => findRepo(project, 'apps/web'), isConfigError(/apps\/web is not registered/));
 });
 
 test('storage: config value, then FLOWS_HOME, then ~/.cache/flows', () => {

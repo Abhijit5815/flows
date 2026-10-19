@@ -197,7 +197,7 @@ First release: Next.js 14 (App Router) frontend and Express 4 + TypeScript backe
 11. Subflows are reusable and user-editable; nesting depth cap of 3 is a proposal.
 
 ## 13. Open items
-- Confirm licenses of the candidate embedding models and the entailment model.
+- Embedding model, decided for now (2026-10-19): bge-small-en-v1.5 at fp32, from BAAI's own repo (MIT on the model card). It is the only candidate that met p95 < 100 ms at all three input sizes measured (spikes/latency/RESULTS.md); BGE-M3 and Qwen3-Embedding are not used for now. Still open: the entailment model and its license.
 - Check maturity and licenses of ast-grep, ts-morph and the tree-sitter grammars.
 - Confirm the subflow nesting cap and whether to cut the Phase 7 drift monitor.
 

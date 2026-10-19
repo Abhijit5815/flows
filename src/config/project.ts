@@ -78,9 +78,10 @@ function validate(root: string, raw: unknown): Project {
 
 const write = (project: Project): void => writeJsonAtomic(configFile(project.root), project.raw, 2);
 
-export function initProject(root: string, name: string): Project {
+// storageDir: keep this project's cache somewhere else (a scratch folder for an eval run, say).
+export function initProject(root: string, name: string, storageDir?: string): Project {
   if (existsSync(configFile(root))) throw new ConfigError(`${configFile(root)} already exists`);
-  const project = validate(root, { schema_version: 0, id: randomUUID(), name, repos: [] });
+  const project = validate(root, { schema_version: 0, id: randomUUID(), name, repos: [], ...(storageDir === undefined ? {} : { storage_dir: storageDir }) });
   write(project);
   return project;
 }

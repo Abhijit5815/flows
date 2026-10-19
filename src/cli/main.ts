@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { basename, join, relative, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { ADAPTERS, adapterFor } from '../adapters/registry.ts';
 import { addRepo, findRepo, initProject, loadProject, projectDataDir, setFramework, storageDir, type Project, type Repo } from '../config/project.ts';
@@ -11,6 +12,7 @@ import { modelDir } from '../embeddings/download.ts';
 import type { Graph } from '../graph/schema.ts';
 import { loadGraph, repoFile } from '../graph/store.ts';
 import { stackOf } from '../ingest/detect.ts';
+import { evaluate, loadKeys, type Score } from '../ingest/eval.ts';
 import { listFiles } from '../ingest/files.ts';
 import { isSource } from '../ingest/match.ts';
 import { CoverageSchema, scanRepo } from '../ingest/pipeline.ts';
@@ -36,6 +38,8 @@ const USAGE = `usage: flows <command> [--project <dir>]
   rule draft --example <path:line>... [--save]   for code no adapter reads: the LLM drafts a rule, kept only if it
                                            reproduces the examples exactly
   rule list                                the rules each repo has learned (<repo>/.flows/rules.json)
+  eval [--keys <dir>] [--samples <dir>]    recall and precision against hand-written answer keys (default: the
+                                           sample apps); exits 1 on any miss or extra
   models list                              the embedding model catalogue
   decide <task> <text>                     run the Decider once, all of the task's labels allowed
   trace [--kind decision|llm_call] [--type <task>] [--last <n>] [--json]`;
@@ -52,6 +56,8 @@ const { values, positionals } = parseArgs({
     json: { type: 'boolean', default: false },
     save: { type: 'boolean', default: false },
     example: { type: 'string', multiple: true },
+    keys: { type: 'string' },
+    samples: { type: 'string' },
   },
 });
 
@@ -223,6 +229,28 @@ async function rule(project: Project, action: string | undefined, args: string[]
   }
 }
 
+async function evalAll(): Promise<void> {
+  const keys = values.keys ?? fileURLToPath(new URL('../../ground-truth/', import.meta.url));
+  const samples = values.samples ?? fileURLToPath(new URL('../../fixtures/samples/', import.meta.url));
+  const cell = (found: Score | undefined) =>
+    found === undefined ? '-' : `${found.matched}/${found.expected}  recall ${(found.recall * 100).toFixed(0)}%  precision ${(found.precision * 100).toFixed(0)}%`;
+  let clean = true;
+  console.log(`${'app'.padEnd(28)}${'endpoints'.padEnd(40)}pages`);
+  for (const key of loadKeys(keys)) {
+    const result = await evaluate(key, join(samples, key.app));
+    console.log(`${key.app.padEnd(28)}${cell(result.endpoints).padEnd(40)}${cell(result.pages)}`);
+    for (const [what, found] of [['endpoint', result.endpoints], ['page', result.pages]] as const) {
+      for (const missed of found?.missed ?? []) console.log(`    missed ${what}: ${missed}`);
+      for (const extra of found?.extra ?? []) console.log(`    extra ${what}: ${extra}`);
+      if ((found?.missed.length ?? 0) + (found?.extra.length ?? 0) > 0) clean = false;
+    }
+    for (const [role, coverage] of Object.entries(result.coverage)) {
+      console.log(`    ${role}: ${coverage.unrecognised.length} unrecognised, ${coverage.missed.length} possibly missed (pattern search), ${coverage.parseErrors.length} files with parse errors  (${result.ms.toFixed(0)} ms)`);
+    }
+  }
+  if (!clean) process.exitCode = 1;
+}
+
 async function run(): Promise<void> {
   const [command, sub, ...rest] = positionals;
   if (command === 'rule') return rule(loadProject(root), sub, rest);
@@ -258,6 +286,8 @@ async function run(): Promise<void> {
     }
     case 'scan':
       return await scanAll(loadProject(root));
+    case 'eval':
+      return await evalAll();
     case 'show':
       if (!sub) throw new FlowsError('usage: flows show <kind> [--json], e.g. flows show routes');
       return show(loadProject(root), sub);

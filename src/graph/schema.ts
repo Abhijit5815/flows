@@ -48,7 +48,7 @@ export const GraphSchema = z
     GraphBase.extend({
       role: z.literal('web'),
       nodes: z.array(WebNodeSchema),
-      edges: z.array(edge(['wrapped-by', 'renders', 'contains', 'submits', 'calls', 'guarded-by'])),
+      edges: z.array(edge(['wrapped-by', 'renders', 'contains', 'submits', 'triggers', 'calls', 'guarded-by'])),
     }),
   ])
   .superRefine((graph, ctx) => {

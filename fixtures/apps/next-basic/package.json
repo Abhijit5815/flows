@@ -1,0 +1,14 @@
+{
+  "name": "next-basic",
+  "private": true,
+  "description": "Flows fixture: a small Next.js 14 App Router shop covering PLAN.md section 14. Parsed only; never installed or run.",
+  "scripts": {
+    "dev": "next dev"
+  },
+  "dependencies": {
+    "next": "^14.2.5",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "zod": "^3.23.8"
+  }
+}

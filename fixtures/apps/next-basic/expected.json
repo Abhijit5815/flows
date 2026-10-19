@@ -1,0 +1,109 @@
+{
+  "framework": "nextjs-app",
+  "pages": [
+    {
+      "page": "/",
+      "at": "app/page.tsx:3",
+      "layouts": ["/ @ app/layout.tsx:4"],
+      "guards": [],
+      "components": ["Promo @ app/_components/Promo.tsx:2"],
+      "forms": [],
+      "actions": [],
+      "calls": []
+    },
+    {
+      "page": "/login",
+      "at": "app/(auth)/login/page.tsx:3",
+      "layouts": ["/ @ app/layout.tsx:4", "/(auth) @ app/(auth)/layout.tsx:3"],
+      "guards": [],
+      "components": ["LoginForm @ app/(auth)/login/login-form.tsx:6"],
+      "forms": ["LoginForm#form @ app/(auth)/login/login-form.tsx:9 [email,password] -> login"],
+      "actions": ["login (server) @ app/(auth)/login/actions.ts:9 -> POST /api/auth/login"],
+      "calls": []
+    },
+    {
+      "page": "/products",
+      "at": "app/(shop)/products/page.tsx:4",
+      "layouts": ["/ @ app/layout.tsx:4", "/(shop) @ app/(shop)/layout.tsx:3"],
+      "guards": [],
+      "components": ["AddToCartButton @ components/AddToCartButton.tsx:5", "ProductCard @ components/ProductCard.tsx:5"],
+      "forms": [],
+      "actions": ["AddToCartButton#onClick (client) @ components/AddToCartButton.tsx:6 -> POST /api/cart/items"],
+      "calls": ["GET /api/products @ lib/api.ts:6"]
+    },
+    {
+      "page": "/products/[id]",
+      "at": "app/(shop)/products/[id]/page.tsx:4",
+      "layouts": ["/ @ app/layout.tsx:4", "/(shop) @ app/(shop)/layout.tsx:3"],
+      "guards": [],
+      "components": ["AddToCartButton @ components/AddToCartButton.tsx:5"],
+      "forms": [],
+      "actions": ["AddToCartButton#onClick (client) @ components/AddToCartButton.tsx:6 -> POST /api/cart/items"],
+      "calls": ["GET /api/products/:id @ lib/api.ts:11"]
+    },
+    {
+      "page": "/cart",
+      "at": "app/(shop)/cart/page.tsx:3",
+      "layouts": ["/ @ app/layout.tsx:4", "/(shop) @ app/(shop)/layout.tsx:3"],
+      "guards": ["middleware @ middleware.ts:4"],
+      "components": [],
+      "forms": [],
+      "actions": [],
+      "calls": ["GET /api/cart @ app/(shop)/cart/page.tsx:4"]
+    },
+    {
+      "page": "/docs/[...slug]",
+      "at": "app/docs/[...slug]/page.tsx:1",
+      "layouts": ["/ @ app/layout.tsx:4"],
+      "guards": [],
+      "components": [],
+      "forms": [],
+      "actions": [],
+      "calls": []
+    },
+    {
+      "page": "/account",
+      "at": "app/account/page.tsx:3",
+      "layouts": ["/ @ app/layout.tsx:4", "/account @ app/account/layout.tsx:3"],
+      "guards": ["middleware @ middleware.ts:4"],
+      "components": ["AddressFields @ components/AddressFields.tsx:1", "ProfileForm @ components/ProfileForm.tsx:7"],
+      "forms": ["ProfileForm#form @ components/ProfileForm.tsx:15 [name,email,street,city] -> handleSubmit"],
+      "actions": ["handleSubmit (client) @ components/ProfileForm.tsx:8 -> PATCH /api/me"],
+      "calls": []
+    },
+    {
+      "page": "/account/orders",
+      "at": "app/account/orders/page.tsx:6",
+      "layouts": ["/ @ app/layout.tsx:4", "/account @ app/account/layout.tsx:3"],
+      "guards": ["middleware @ middleware.ts:4"],
+      "components": [],
+      "forms": ["OrdersPage#form @ app/account/orders/page.tsx:12 [] -> cancelOrder"],
+      "actions": ["cancelOrder (server) @ app/account/orders/actions.ts:6 -> DELETE /api/orders/:orderId"],
+      "calls": ["GET /api/orders @ app/account/orders/page.tsx:7"]
+    }
+  ],
+  "layouts": [
+    {
+      "layout": "/",
+      "at": "app/layout.tsx:4",
+      "components": ["Header @ components/Header.tsx:4"],
+      "forms": ["Header#form @ components/Header.tsx:8 [] -> Header#action"],
+      "actions": ["Header#action (server) @ components/Header.tsx:9 -> POST /api/auth/logout"],
+      "calls": []
+    },
+    { "layout": "/(auth)", "at": "app/(auth)/layout.tsx:3", "components": [], "forms": [], "actions": [], "calls": [] },
+    { "layout": "/(shop)", "at": "app/(shop)/layout.tsx:3", "components": [], "forms": [], "actions": [], "calls": [] },
+    { "layout": "/account", "at": "app/account/layout.tsx:3", "components": [], "forms": [], "actions": [], "calls": [] }
+  ],
+  "unrecognised": ["app/@modal/(.)login/page.tsx:1", "app/api/health/route.ts:1", "lib/legacy.ts:5"],
+  "notes": [
+    "Route groups add nothing to the path: app/(auth)/login is /login; (auth) and (shop) still have their own layouts.",
+    "API calls keep only the path after the base URL; API_URL falls back to http://localhost:4000/api, so the paths start with /api.",
+    "Server actions: login via useFormState (login-form.tsx:7), cancelOrder via .bind (orders/page.tsx:12), and an inline 'use server' action in Header.tsx:9.",
+    "Client actions: ProfileForm's onSubmit handler and AddToCartButton's onClick; their API calls are in lib/api.ts.",
+    "ProfileForm's street and city fields come from AddressFields, a component rendered inside the form.",
+    "middleware.ts guards what its matcher lists: /account, /account/orders and /cart.",
+    "lib/legacy.ts:5 is a fetch no page reaches; the coverage report lists it.",
+    "Not pages: loading.tsx, app/_components (a private folder), app/api/health/route.ts (a route handler; API flows come from the backend in slice 1) and app/@modal (a parallel route)."
+  ]
+}

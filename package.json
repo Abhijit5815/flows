@@ -9,7 +9,8 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "node --test \"src/**/*.test.ts\" \"ground-truth/**/*.test.ts\"",
-    "bench:latency": "node spikes/latency/bench.ts"
+    "bench:latency": "node spikes/latency/bench.ts",
+    "flows": "node src/cli/main.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.135.0",

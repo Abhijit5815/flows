@@ -26,6 +26,9 @@ test('express fixture: every route, with its handler, guards, middleware, schema
   const models = graph.nodes.filter((node) => node.kind === 'model').map((node) => `${node.attrs.name} @ ${node.file}:${node.line}`);
   assert.deepEqual(models.sort(), expected.models);
   assert.deepEqual(coverage.unrecognised.map((note) => `${note.file}:${note.line}`).sort(), expected.unrecognised);
+  // Pattern search (no embedding model here): listed for review, and none of it is in the graph.
+  assert.deepEqual(coverage.missed.map((suspect) => `${suspect.file}:${suspect.line}`), expected.missed);
+  assert.ok(coverage.missed.every((suspect) => !graph.nodes.some((node) => node.file === suspect.file && node.line === suspect.line)));
 });
 
 test('paths join the way Express joins them', () => {

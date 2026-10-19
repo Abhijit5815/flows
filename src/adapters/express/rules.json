@@ -32,5 +32,38 @@
   "guards": {
     "name": "auth|guard|protect|jwt|permission|role|logged.?in|signed.?in",
     "body": "\\bjwt\\b|passport\\.authenticate|\\.verify\\(|\\b40[13]\\b"
-  }
+  },
+  "suspects": [
+    {
+      "id": "handler-shaped",
+      "note": "a function shaped like a request handler (req, res) that no extracted route uses",
+      "rule": {
+        "any": [
+          {
+            "kind": "function_declaration"
+          },
+          {
+            "kind": "arrow_function"
+          },
+          {
+            "kind": "method_definition"
+          },
+          {
+            "kind": "function_expression"
+          }
+        ],
+        "has": {
+          "field": "parameters",
+          "regex": "^\\(\\s*(req|request)\\b[^,]*,\\s*(res|response)\\b"
+        }
+      }
+    },
+    {
+      "id": "computed-method",
+      "note": "a route registered with a computed method name, which the route rules can't read",
+      "rule": {
+        "pattern": "$R[$M]($PATH, $$$HANDLERS)"
+      }
+    }
+  ]
 }

@@ -9,7 +9,7 @@ import type { ExtractContext, FrameworkAdapter, Unrecognised } from '../adapter.
 // Next.js 14 App Router: pages and layouts come from the app/ folder's file conventions; components, forms,
 // actions and API calls are followed from each page with the resolver. The rules (rules.json) find every API call
 // site, so calls that no page reaches are reported.
-const RULES = z.object({ patterns: z.array(PatternRuleSchema) }).parse(JSON.parse(readFileSync(new URL('./rules.json', import.meta.url), 'utf8')));
+const RULES = z.object({ patterns: z.array(PatternRuleSchema), suspects: z.array(PatternRuleSchema) }).parse(JSON.parse(readFileSync(new URL('./rules.json', import.meta.url), 'utf8')));
 
 const ROUTE_FILE = /^(page|layout|route)\.(tsx|ts|jsx|js)$/;
 const FORM_STATE_HOOKS = new Set(['useFormState', 'useActionState']);
@@ -348,5 +348,6 @@ export const nextAppAdapter: FrameworkAdapter = {
   // Only the App Router is supported; a Pages Router app has no app/ folder and is reported, not guessed at.
   detection: { dependency: 'next', testedMajor: 14, needsOneOf: ['app', 'src/app'] },
   rules: RULES.patterns,
+  suspects: RULES.suspects,
   extract,
 };

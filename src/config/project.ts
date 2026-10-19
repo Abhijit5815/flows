@@ -52,6 +52,8 @@ export const ProjectConfigSchema = z.object({
     .prefault({ provider: 'openai-compatible', base_url: 'http://localhost:11434/v1', model: 'llama3.2:3b' }),
   embedder: z.discriminatedUnion('provider', [LocalEmbedderSchema, OpenAiCompatibleSchema]).prefault({ provider: 'local' }),
   decider: z.object({ thresholds: z.record(z.string(), ThresholdSchema).prefault({}) }).prefault({}),
+  // The "possibly missed" list after each scan: how alike a function must be to the graph's handlers or actions.
+  possibly_missed: z.object({ min_similarity: z.number().min(0).max(1).default(0.78), limit: z.int().positive().default(20) }).prefault({}),
   storage_dir: z.string().min(1).optional(),
   categories: z.array(CategorySchema).min(1).optional(),
 });

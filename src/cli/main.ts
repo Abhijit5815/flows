@@ -6,12 +6,14 @@ import { addRepo, findRepo, initProject, loadProject, projectDataDir, setFramewo
 import { createDecider } from '../decider/create.ts';
 import { loadBuiltInTasks } from '../decider/task.ts';
 import { CATALOGUE } from '../embeddings/catalogue.ts';
+import { createEmbeddingProvider } from '../embeddings/create.ts';
 import { modelDir } from '../embeddings/download.ts';
 import type { Graph } from '../graph/schema.ts';
-import { loadGraph } from '../graph/store.ts';
+import { loadGraph, repoFile } from '../graph/store.ts';
 import { stackOf } from '../ingest/detect.ts';
-import { scanRepo } from '../ingest/pipeline.ts';
+import { CoverageSchema, scanRepo } from '../ingest/pipeline.ts';
 import { FlowsError } from '../shared/errors.ts';
+import { readCache } from '../shared/json-file.ts';
 import type { TraceEvent } from '../trace/event.ts';
 import { readTrace, traceFile } from '../trace/sink.ts';
 
@@ -22,7 +24,7 @@ const USAGE = `usage: flows <command> [--project <dir>]
   stack                                    the framework found for each repo, and why
   stack set <path> <framework|auto> [--role web|api]   pin a repo's framework, or go back to detection
   scan                                     build each repo's graph (files are parsed again only when they change)
-  show <kind> [--json]                     what the last scan found: routes, pages, handlers, guards, ...
+  show <kind> [--json]                     what the last scan found: routes, pages, handlers, guards, ... or missed
   models list                              the embedding model catalogue
   decide <task> <text>                     run the Decider once, all of the task's labels allowed
   trace [--kind decision|llm_call] [--type <task>] [--last <n>] [--json]`;
@@ -92,8 +94,10 @@ function showStacks(project: Project, repos: readonly Repo[]): void {
 }
 
 async function scanAll(project: Project): Promise<void> {
+  const embedder = createEmbeddingProvider(project.config.embedder, join(storageDir(project), 'models'), progress());
+  const { min_similarity: minSimilarity, limit } = project.config.possibly_missed;
   for (const repo of project.config.repos) {
-    const { stack, graph, coverage, ms } = await scanRepo(project, repo);
+    const { stack, graph, coverage, ms } = await scanRepo(project, repo, { embedder, possiblyMissed: { minSimilarity, limit } });
     console.log(`${repo.role}  ${repo.path}  ${stack.framework ?? 'unknown framework'}${stack.version ? ` ${stack.version}` : ''}  (${ms.toFixed(0)} ms)`);
     if (graph === undefined) {
       console.log('  no adapter fits this repo, so there is no graph; see "flows stack"');
@@ -107,6 +111,18 @@ async function scanAll(project: Project): Promise<void> {
     for (const { file, errors } of coverage.parseErrors) console.log(`    ${file}: ${errors} parse error(s); matches elsewhere in the file are still used`);
     if (coverage.unrecognised.length > 0) console.log(`  unrecognised (${coverage.unrecognised.length}):`);
     for (const note of coverage.unrecognised) console.log(`    ${note.file}:${note.line}  ${note.reason}`);
+    if (coverage.missed.length > 0) console.log(`  possibly missed: ${coverage.missed.length}; see "flows show missed" (listed for review, never added to the graph)`);
+  }
+}
+
+function showMissed(project: Project): void {
+  for (const repo of project.config.repos) {
+    const coverage = readCache(repoFile(project, 'coverage', repo), CoverageSchema);
+    if (coverage === undefined) {
+      console.log(`${repo.role}  ${repo.path}: not scanned yet; run "flows scan"`);
+      continue;
+    }
+    for (const suspect of coverage.missed) console.log(values.json ? JSON.stringify({ repo: repo.path, ...suspect }) : `${repo.role}  ${repo.path}  ${suspect.file}:${suspect.line}  ${suspect.reason}`);
   }
 }
 
@@ -117,6 +133,7 @@ function describe(graph: Graph, node: Graph['nodes'][number]): string {
 }
 
 function show(project: Project, what: string): void {
+  if (what === 'missed') return showMissed(project);
   const kind = what.replace(/s$/, '');
   for (const repo of project.config.repos) {
     const graph = loadGraph(project, repo);

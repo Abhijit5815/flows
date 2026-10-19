@@ -144,12 +144,13 @@
   ],
   "models": ["Order @ prisma/schema.prisma:24", "Product @ prisma/schema.prisma:18", "User @ prisma/schema.prisma:10"],
   "unrecognised": ["src/server.ts:14"],
+  "missed": ["src/controllers/users.controller.ts:33", "src/server.ts:14", "src/server.ts:17"],
   "notes": [
     "Every route is mounted under /api (src/server.ts:11), then /v1 (src/routes/index.ts:12). Users and orders are mounted in a loop over constant prefixes (index.ts:19); admin routes carry their own /admin prefix from a class property and sit behind both guards (index.ts:24).",
     "The products routes come from a router factory (src/routes/products.routes.ts:4) mounted at /products (index.ts:21).",
     "orders.routes.ts:10 puts requireAuth on every order route registered after it.",
     "Not routes: express.json() (server.ts:7), supertest calls in src/__tests__/, and app.get with only a setting name.",
     "src/server.ts:14 is a route whose path comes from the environment; it is reported as unrecognised, not guessed.",
-    "Not extracted, on purpose: app[method]('/ping') with a computed method (server.ts:17), and exportCsv, a handler no route uses (users.controller.ts:33)."
+    "missed (pattern search): exportCsv, a handler no route uses (users.controller.ts:33); the handler of the env-path route (server.ts:14); app[method]('/ping') with a computed method (server.ts:17). None of them enters the graph."
   ]
 }

@@ -17,5 +17,55 @@
         }
       }
     }
+  ],
+  "suspects": [
+    {
+      "id": "server-action-export",
+      "note": "a server action ('use server' export) that no form or button uses",
+      "rule": {
+        "kind": "export_statement",
+        "has": {
+          "any": [
+            {
+              "kind": "function_declaration"
+            },
+            {
+              "kind": "lexical_declaration"
+            }
+          ]
+        },
+        "inside": {
+          "kind": "program",
+          "has": {
+            "kind": "expression_statement",
+            "regex": "^['\"]use server['\"]"
+          }
+        }
+      }
+    },
+    {
+      "id": "form-handler-shaped",
+      "note": "a function taking FormData or a form event that no form or button uses",
+      "rule": {
+        "any": [
+          {
+            "kind": "function_declaration"
+          },
+          {
+            "kind": "arrow_function"
+          },
+          {
+            "kind": "method_definition"
+          },
+          {
+            "kind": "function_expression"
+          }
+        ],
+        "has": {
+          "field": "parameters",
+          "regex": "FormData|FormEvent"
+        }
+      }
+    }
   ]
 }

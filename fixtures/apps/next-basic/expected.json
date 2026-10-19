@@ -95,7 +95,8 @@
     { "layout": "/(shop)", "at": "app/(shop)/layout.tsx:3", "components": [], "forms": [], "actions": [], "calls": [] },
     { "layout": "/account", "at": "app/account/layout.tsx:3", "components": [], "forms": [], "actions": [], "calls": [] }
   ],
-  "unrecognised": ["app/@modal/(.)login/page.tsx:1", "app/api/health/route.ts:1", "lib/legacy.ts:5"],
+  "unrecognised": ["app/(auth)/login/actions.ts:19", "app/@modal/(.)login/page.tsx:1", "app/api/health/route.ts:1", "lib/legacy.ts:5"],
+  "missed": ["app/(auth)/login/actions.ts:18"],
   "notes": [
     "Route groups add nothing to the path: app/(auth)/login is /login; (auth) and (shop) still have their own layouts.",
     "API calls keep only the path after the base URL; API_URL falls back to http://localhost:4000/api, so the paths start with /api.",
@@ -104,6 +105,7 @@
     "ProfileForm's street and city fields come from AddressFields, a component rendered inside the form.",
     "middleware.ts guards what its matcher lists: /account, /account/orders and /cart.",
     "lib/legacy.ts:5 is a fetch no page reaches; the coverage report lists it.",
+    "missed: resetPassword (actions.ts:18) is a server action no form uses; the pattern search lists it, and it never enters the graph. Its fetch (actions.ts:19) is unreached, so it is unrecognised too.",
     "Not pages: loading.tsx, app/_components (a private folder), app/api/health/route.ts (a route handler; API flows come from the backend in slice 1) and app/@modal (a parallel route)."
   ]
 }

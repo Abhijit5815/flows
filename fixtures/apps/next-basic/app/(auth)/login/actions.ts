@@ -13,3 +13,8 @@ export async function login(previous: string | undefined, formData: FormData) {
   if (!res.ok) return 'Wrong email or password.';
   redirect('/account');
 }
+
+// Not wired to any form yet; the possibly-missed list should show it.
+export async function resetPassword(formData: FormData) {
+  await fetch(`${API_URL}/auth/reset`, { method: 'POST', body: JSON.stringify({ email: formData.get('email') }) });
+}

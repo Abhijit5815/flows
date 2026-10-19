@@ -8,7 +8,7 @@ import type { ExtractContext, FrameworkAdapter, Unrecognised } from '../adapter.
 // The rules are data (rules.json); this file follows what they match: routers, mounts, routes, handlers,
 // guards, request schemas, responses and the Prisma models a handler touches.
 const RULES = z
-  .object({ patterns: z.array(PatternRuleSchema), guards: z.object({ name: z.string(), body: z.string() }) })
+  .object({ patterns: z.array(PatternRuleSchema), suspects: z.array(PatternRuleSchema), guards: z.object({ name: z.string(), body: z.string() }) })
   .parse(JSON.parse(readFileSync(new URL('./rules.json', import.meta.url), 'utf8')));
 const GUARD_NAME = new RegExp(RULES.guards.name, 'i');
 const GUARD_BODY = new RegExp(RULES.guards.body);
@@ -306,5 +306,6 @@ export const expressAdapter: FrameworkAdapter = {
   role: 'api',
   detection: { dependency: 'express', testedMajor: 4 },
   rules: RULES.patterns,
+  suspects: RULES.suspects,
   extract,
 };

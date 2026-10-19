@@ -29,15 +29,18 @@ test('next fixture: every page and layout, with layouts, guards, components, for
   assert.deepEqual(byKey('page', pages), byKey('page', expected.pages));
   assert.deepEqual(byKey('layout', layouts), byKey('layout', expected.layouts));
   assert.deepEqual(coverage.unrecognised.map((note) => `${note.file}:${note.line}`).sort(), expected.unrecognised);
+  // Pattern search (no embedding model here): listed for review, and none of it is in the graph.
+  assert.deepEqual(coverage.missed.map((suspect) => `${suspect.file}:${suspect.line}`), expected.missed);
+  assert.ok(coverage.missed.every((suspect) => !graph.nodes.some((node) => node.file === suspect.file && node.line === suspect.line)));
 });
 
-// The fixture test has to be able to fail: without the API-call rules, the unreached fetch in lib/legacy.ts is
-// no longer reported.
-test('a broken rule fails the fixture: without the api-call rules, the unreached call goes unreported', async () => {
+// The fixture test has to be able to fail: without the API-call rules, the unreached fetches (lib/legacy.ts and
+// the unwired resetPassword action) are no longer reported.
+test('a broken rule fails the fixture: without the api-call rules, unreached calls go unreported', async () => {
   const { coverage } = await scanFixture('broken', [{ ...nextAppAdapter, rules: nextAppAdapter.rules.filter((rule) => rule.id !== 'api-call') }]);
   const notes = coverage.unrecognised.map((note) => `${note.file}:${note.line}`).sort();
   assert.notDeepEqual(notes, expected.unrecognised);
-  assert.deepEqual(expected.unrecognised.filter((note: string) => !notes.includes(note)), ['lib/legacy.ts:5']);
+  assert.deepEqual(expected.unrecognised.filter((note: string) => !notes.includes(note)), ['app/(auth)/login/actions.ts:19', 'lib/legacy.ts:5']);
 });
 
 test('route groups add nothing to the path; dynamic and catch-all segments stay', () => {

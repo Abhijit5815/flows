@@ -28,5 +28,8 @@ export interface FrameworkAdapter {
   readonly role: Role;
   readonly detection: DetectionRule;
   readonly rules: readonly PatternRule[]; // run by the pipeline on every source file; results cached per file
+  // Wider patterns for code that looks like a route, handler or action; matches the graph doesn't cover go to the
+  // "possibly missed" list (never into the graph).
+  readonly suspects: readonly PatternRule[];
   extract(context: ExtractContext): Unrecognised[];
 }

@@ -1,10 +1,11 @@
 import { randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, join, relative, resolve } from 'node:path';
+import { join, relative, resolve } from 'node:path';
 import { z } from 'zod';
 import { CategorySchema, DEFAULT_CATEGORIES, type Category } from '../model/category.ts';
 import { ConfigError } from '../shared/errors.ts';
+import { writeJsonAtomic } from '../shared/json-file.ts';
 import { parseOrThrow } from '../shared/validate.ts';
 
 const RoleSchema = z.enum(['web', 'api']);
@@ -71,12 +72,7 @@ function validate(root: string, raw: unknown): Project {
   return { root, config, raw: raw as Record<string, unknown> }; // safe: the schema accepted an object
 }
 
-function write(project: Project): void {
-  const file = configFile(project.root);
-  mkdirSync(dirname(file), { recursive: true });
-  writeFileSync(`${file}.tmp`, `${JSON.stringify(project.raw, null, 2)}\n`);
-  renameSync(`${file}.tmp`, file); // atomic, so a crash never leaves half a config
-}
+const write = (project: Project): void => writeJsonAtomic(configFile(project.root), project.raw, 2);
 
 export function initProject(root: string, name: string): Project {
   if (existsSync(configFile(root))) throw new ConfigError(`${configFile(root)} already exists`);

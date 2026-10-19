@@ -200,7 +200,7 @@ First release: Next.js 14 (App Router) frontend and Express 4 + TypeScript backe
 
 ## 13. Open items
 - Embedding model, decided for now (2026-10-19): bge-small-en-v1.5 at fp32, from BAAI's own repo (MIT on the model card). It is the only candidate that met p95 < 100 ms at all three input sizes measured (spikes/latency/RESULTS.md); BGE-M3 and Qwen3-Embedding are not used for now. Still open: the entailment model and its license (chosen at the start of Phase 4).
-- Check maturity and licenses of ast-grep, ts-morph and the tree-sitter grammars.
+- Parser tools, decided 2026-10-19: ast-grep (`@ast-grep/napi`, MIT) for declarative pattern rules and ts-morph (MIT; bundles its own TypeScript 6.0.2, so the project's TypeScript 7 doesn't affect it) for resolving constants, imports and prefixes. The tree-sitter TypeScript grammar is not used directly (its npm package was last released in 2024 and needs an older tree-sitter). Spike: spikes/parsers/RESULTS.md.
 - Confirm the subflow nesting cap and whether to cut the Phase 7 drift monitor.
 - Hosted LLM check (left open when Phase 1 closed, 2026-10-19): the hosted path of the LLM gateway (Claude through the Anthropic SDK, or any OpenAI-compatible provider) is tested only against a fake server. A real call still needs a user's own API key; Phase 1 closed with the local model (Ollama `llama3.2:3b`) verified live.
 

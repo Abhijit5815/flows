@@ -1,0 +1,36 @@
+{
+  "patterns": [
+    {
+      "id": "route",
+      "rule": {
+        "pattern": "$R.$M($PATH, $$$HANDLERS)"
+      },
+      "constraints": {
+        "M": {
+          "regex": "^(get|post|put|patch|delete|head|options|all)$"
+        },
+        "R": {
+          "not": {
+            "kind": "call_expression"
+          }
+        }
+      }
+    },
+    {
+      "id": "route-chain",
+      "rule": {
+        "pattern": "$R.route($PATH)"
+      }
+    },
+    {
+      "id": "mount",
+      "rule": {
+        "pattern": "$R.use($$$ARGS)"
+      }
+    }
+  ],
+  "guards": {
+    "name": "auth|guard|protect|jwt|permission|role|logged.?in|signed.?in",
+    "body": "\\bjwt\\b|passport\\.authenticate|\\.verify\\(|\\b40[13]\\b"
+  }
+}

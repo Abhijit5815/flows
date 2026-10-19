@@ -71,7 +71,7 @@ test('a framework pinned in the config wins over detection, and must exist and f
 });
 
 test('two adapters of one role matching is reported, not guessed', () => {
-  const twin = (id: string): FrameworkAdapter => ({ id, role: 'api', detection: { dependency: 'express', testedMajor: 4 } });
+  const twin = (id: string): FrameworkAdapter => ({ id, role: 'api', detection: { dependency: 'express', testedMajor: 4 }, rules: [], extract: () => [] });
   const stack = stackOf(app('ambiguous', { express: '^4.19.2' }), { path: '.', role: 'api' }, [twin('a'), twin('b')]);
   assert.equal(stack.framework, undefined);
   assert.match(stack.warnings.join('\n'), /a and b all match/);

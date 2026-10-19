@@ -7,7 +7,10 @@ import { createDecider } from '../decider/create.ts';
 import { loadBuiltInTasks } from '../decider/task.ts';
 import { CATALOGUE } from '../embeddings/catalogue.ts';
 import { modelDir } from '../embeddings/download.ts';
+import type { Graph } from '../graph/schema.ts';
+import { loadGraph } from '../graph/store.ts';
 import { stackOf } from '../ingest/detect.ts';
+import { scanRepo } from '../ingest/pipeline.ts';
 import { FlowsError } from '../shared/errors.ts';
 import type { TraceEvent } from '../trace/event.ts';
 import { readTrace, traceFile } from '../trace/sink.ts';
@@ -18,6 +21,8 @@ const USAGE = `usage: flows <command> [--project <dir>]
   repo list
   stack                                    the framework found for each repo, and why
   stack set <path> <framework|auto> [--role web|api]   pin a repo's framework, or go back to detection
+  scan                                     build each repo's graph (files are parsed again only when they change)
+  show <kind> [--json]                     what the last scan found: routes, pages, handlers, guards, ...
   models list                              the embedding model catalogue
   decide <task> <text>                     run the Decider once, all of the task's labels allowed
   trace [--kind decision|llm_call] [--type <task>] [--last <n>] [--json]`;
@@ -86,6 +91,43 @@ function showStacks(project: Project, repos: readonly Repo[]): void {
   }
 }
 
+async function scanAll(project: Project): Promise<void> {
+  for (const repo of project.config.repos) {
+    const { stack, graph, coverage, ms } = await scanRepo(project, repo);
+    console.log(`${repo.role}  ${repo.path}  ${stack.framework ?? 'unknown framework'}${stack.version ? ` ${stack.version}` : ''}  (${ms.toFixed(0)} ms)`);
+    if (graph === undefined) {
+      console.log('  no adapter fits this repo, so there is no graph; see "flows stack"');
+      continue;
+    }
+    const counts = new Map<string, number>();
+    for (const node of graph.nodes) counts.set(node.kind, (counts.get(node.kind) ?? 0) + 1);
+    console.log(`  found: ${[...counts].map(([kind, n]) => `${n} ${kind}`).join(', ') || 'nothing'}`);
+    const cached = coverage.sources - coverage.parsed.length;
+    console.log(`  files: ${coverage.files} listed, ${coverage.sources} source (${coverage.parsed.length} parsed now, ${cached} unchanged), ${coverage.parseErrors.length} with parse errors`);
+    for (const { file, errors } of coverage.parseErrors) console.log(`    ${file}: ${errors} parse error(s); matches elsewhere in the file are still used`);
+    if (coverage.unrecognised.length > 0) console.log(`  unrecognised (${coverage.unrecognised.length}):`);
+    for (const note of coverage.unrecognised) console.log(`    ${note.file}:${note.line}  ${note.reason}`);
+  }
+}
+
+function describe(graph: Graph, node: Graph['nodes'][number]): string {
+  const linked = (kind: string) => graph.edges.filter((edge) => edge.from === node.id && edge.kind === kind).map((edge) => edge.to.split(':').slice(2).join(':'));
+  const extra = node.kind === 'route' ? `  -> ${linked('handled-by').join(', ') || 'no handler'}${linked('guarded-by').length > 0 ? `  guarded by ${linked('guarded-by').join(', ')}` : ''}` : '';
+  return `${node.id}  ${node.file}:${node.line}${extra}`;
+}
+
+function show(project: Project, what: string): void {
+  const kind = what.replace(/s$/, '');
+  for (const repo of project.config.repos) {
+    const graph = loadGraph(project, repo);
+    if (graph === undefined) {
+      console.log(`${repo.role}  ${repo.path}: not scanned yet; run "flows scan"`);
+      continue;
+    }
+    for (const node of graph.nodes.filter((candidate) => candidate.kind === kind)) console.log(values.json ? JSON.stringify(node) : describe(graph, node));
+  }
+}
+
 async function run(): Promise<void> {
   const [command, sub, ...rest] = positionals;
   switch (`${command ?? ''} ${command === 'repo' || command === 'models' || command === 'stack' ? (sub ?? '') : ''}`.trim()) {
@@ -118,6 +160,11 @@ async function run(): Promise<void> {
       if (framework !== undefined) adapterFor(framework, repo.role);
       return showStacks(setFramework(project, repo, framework), [{ ...repo, framework }]);
     }
+    case 'scan':
+      return await scanAll(loadProject(root));
+    case 'show':
+      if (!sub) throw new FlowsError('usage: flows show <kind> [--json], e.g. flows show routes');
+      return show(loadProject(root), sub);
     case 'models list':
       return listModels(loadProject(root));
     case 'decide': {

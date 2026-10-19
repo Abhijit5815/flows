@@ -1,0 +1,17 @@
+{
+  "name": "express-basic",
+  "private": true,
+  "description": "Flows fixture: a small Express 4 + TypeScript API covering PLAN.md section 14. Parsed only; never installed or run.",
+  "scripts": {
+    "start": "ts-node src/server.ts"
+  },
+  "dependencies": {
+    "@prisma/client": "^5.18.0",
+    "express": "^4.19.2",
+    "jsonwebtoken": "^9.0.2",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "supertest": "^7.0.0"
+  }
+}

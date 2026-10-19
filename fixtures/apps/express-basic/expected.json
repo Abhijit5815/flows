@@ -1,0 +1,155 @@
+{
+  "framework": "express",
+  "routes": [
+    {
+      "route": "GET /health",
+      "at": "src/server.ts:8",
+      "handler": "GET /health @ src/server.ts:8",
+      "guards": [],
+      "middleware": [],
+      "schemas": [],
+      "responses": ["200 status"],
+      "models": []
+    },
+    {
+      "route": "POST /api/v1/users/register",
+      "at": "src/routes/users.routes.ts:9",
+      "handler": "register @ src/controllers/users.controller.ts:7",
+      "guards": [],
+      "middleware": ["validate @ src/middleware/validate.ts:6"],
+      "schemas": ["registerSchema @ src/schemas/user.schema.ts:3"],
+      "responses": ["201 success,data,error,timestamp", "409 success,data,error,timestamp"],
+      "models": ["User @ prisma/schema.prisma:10"]
+    },
+    {
+      "route": "POST /api/v1/users/login",
+      "at": "src/routes/users.routes.ts:10",
+      "handler": "login @ src/controllers/users.controller.ts:14",
+      "guards": [],
+      "middleware": ["validate @ src/middleware/validate.ts:6"],
+      "schemas": ["loginSchema @ src/schemas/user.schema.ts:5"],
+      "responses": ["200 success,data,error,timestamp", "401 success,data,error,timestamp"],
+      "models": ["User @ prisma/schema.prisma:10"]
+    },
+    {
+      "route": "GET /api/v1/users/me",
+      "at": "src/routes/users.routes.ts:11",
+      "handler": "me @ src/controllers/users.controller.ts:20",
+      "guards": ["requireAuth @ src/middleware/auth.ts:9"],
+      "middleware": [],
+      "schemas": [],
+      "responses": ["200 success,data,error,timestamp"],
+      "models": []
+    },
+    {
+      "route": "GET /api/v1/users/:id",
+      "at": "src/routes/users.routes.ts:14",
+      "handler": "getById @ src/controllers/users.controller.ts:22",
+      "guards": ["requireAuth @ src/middleware/auth.ts:9"],
+      "middleware": [],
+      "schemas": [],
+      "responses": ["200 success,data,error,timestamp", "404 success,data,error,timestamp"],
+      "models": ["User @ prisma/schema.prisma:10"]
+    },
+    {
+      "route": "PATCH /api/v1/users/:id",
+      "at": "src/routes/users.routes.ts:15",
+      "handler": "update @ src/controllers/users.controller.ts:27",
+      "guards": ["requireAuth @ src/middleware/auth.ts:9"],
+      "middleware": ["validate @ src/middleware/validate.ts:6"],
+      "schemas": ["updateUserSchema @ src/schemas/user.schema.ts:7"],
+      "responses": ["200 success,data,error,timestamp"],
+      "models": ["User @ prisma/schema.prisma:10"]
+    },
+    {
+      "route": "GET /api/v1/orders",
+      "at": "src/routes/orders.routes.ts:12",
+      "handler": "orders.list @ src/controllers/orders.controller.ts:8",
+      "guards": ["requireAuth @ src/middleware/auth.ts:9"],
+      "middleware": [],
+      "schemas": [],
+      "responses": ["200 success,data,error,timestamp"],
+      "models": ["Order @ prisma/schema.prisma:24"]
+    },
+    {
+      "route": "POST /api/v1/orders",
+      "at": "src/routes/orders.routes.ts:12",
+      "handler": "orders.create @ src/controllers/orders.controller.ts:11",
+      "guards": ["requireAuth @ src/middleware/auth.ts:9"],
+      "middleware": [],
+      "schemas": ["createOrderSchema @ src/schemas/order.schema.ts:3"],
+      "responses": ["201 success,data,error,timestamp", "404 success,data,error,timestamp"],
+      "models": ["Order @ prisma/schema.prisma:24", "Product @ prisma/schema.prisma:18"]
+    },
+    {
+      "route": "GET /api/v1/orders/:orderId",
+      "at": "src/routes/orders.routes.ts:13",
+      "handler": "orders.getById @ src/controllers/orders.controller.ts:17",
+      "guards": ["requireAuth @ src/middleware/auth.ts:9"],
+      "middleware": [],
+      "schemas": [],
+      "responses": ["200 success,data,error,timestamp", "404 success,data,error,timestamp"],
+      "models": ["Order @ prisma/schema.prisma:24"]
+    },
+    {
+      "route": "DELETE /api/v1/orders/:orderId",
+      "at": "src/routes/orders.routes.ts:14",
+      "handler": "orders.cancel @ src/controllers/orders.controller.ts:21",
+      "guards": ["requireAuth @ src/middleware/auth.ts:9"],
+      "middleware": [],
+      "schemas": [],
+      "responses": ["204"],
+      "models": ["Order @ prisma/schema.prisma:24"]
+    },
+    {
+      "route": "GET /api/v1/products",
+      "at": "src/routes/products.routes.ts:6",
+      "handler": "GET /api/v1/products @ src/routes/products.routes.ts:6",
+      "guards": [],
+      "middleware": [],
+      "schemas": [],
+      "responses": ["200 resource,items"],
+      "models": []
+    },
+    {
+      "route": "GET /api/v1/products/:id",
+      "at": "src/routes/products.routes.ts:7",
+      "handler": "GET /api/v1/products/:id @ src/routes/products.routes.ts:7",
+      "guards": [],
+      "middleware": [],
+      "schemas": [],
+      "responses": ["200 resource,id"],
+      "models": []
+    },
+    {
+      "route": "GET /api/v1/admin/stats",
+      "at": "src/routes/admin.routes.ts:10",
+      "handler": "AdminController.stats @ src/controllers/admin.controller.ts:5",
+      "guards": ["requireAuth @ src/middleware/auth.ts:9", "requireRole @ src/middleware/auth.ts:20"],
+      "middleware": [],
+      "schemas": [],
+      "responses": ["200 users,orders"],
+      "models": ["Order @ prisma/schema.prisma:24", "User @ prisma/schema.prisma:10"]
+    },
+    {
+      "route": "ALL /api/v1/admin/maintenance",
+      "at": "src/routes/admin.routes.ts:11",
+      "handler": "AdminController.maintenance @ src/controllers/admin.controller.ts:10",
+      "guards": ["requireAuth @ src/middleware/auth.ts:9", "requireRole @ src/middleware/auth.ts:20"],
+      "middleware": [],
+      "schemas": [],
+      "responses": ["204"],
+      "models": []
+    }
+  ],
+  "models": ["Order @ prisma/schema.prisma:24", "Product @ prisma/schema.prisma:18", "User @ prisma/schema.prisma:10"],
+  "unrecognised": ["src/server.ts:14"],
+  "notes": [
+    "Every route is mounted under /api (src/server.ts:11), then /v1 (src/routes/index.ts:12). Users and orders are mounted in a loop over constant prefixes (index.ts:19); admin routes carry their own /admin prefix from a class property and sit behind both guards (index.ts:24).",
+    "The products routes come from a router factory (src/routes/products.routes.ts:4) mounted at /products (index.ts:21).",
+    "orders.routes.ts:10 puts requireAuth on every order route registered after it.",
+    "Not routes: express.json() (server.ts:7), supertest calls in src/__tests__/, and app.get with only a setting name.",
+    "src/server.ts:14 is a route whose path comes from the environment; it is reported as unrecognised, not guessed.",
+    "Not extracted, on purpose: app[method]('/ping') with a computed method (server.ts:17), and exportCsv, a handler no route uses (users.controller.ts:33)."
+  ]
+}

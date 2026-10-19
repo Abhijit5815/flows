@@ -16,7 +16,7 @@ The tool never generates or runs tests. It explores the live app only to discove
 - **LLM proposes, deterministic code decides.** No flow is "true" because a model said so.
 - **Every claim needs evidence** (file:line from source; for observed flows also request/response or screenshot). No evidence means the claim is dropped.
 - **Fail closed.** Unknown stays `unverified` and is disabled by default.
-- **Provider-agnostic.** Any OpenAI-compatible LLM, or a local model (e.g. Ollama). The user brings their own API key; it stays on their machine.
+- **Provider-agnostic.** Any OpenAI-compatible LLM, Claude through the official Anthropic SDK, or a local model (e.g. Ollama). The user brings their own API key; it stays on their machine.
 - **Free, local embeddings.** Open-source embedding model, downloaded on first use, not bundled. Hosted embeddings optional.
 - **Local-first for code.** Source never leaves the machine unless the user points to a remote endpoint.
 - **Fast decisions without generation.** Routing, intent and guardrails use rules plus an embedding-based classifier (target p95 < 100 ms on CPU), not an LLM.
@@ -47,7 +47,7 @@ The tool never generates or runs tests. It explores the live app only to discove
 ```
 
 Components:
-- **LLM gateway:** OpenAI-compatible interface (LiteLLM or equivalent). Roles: `llm` (naming, descriptions, `unknown` cases) and `embedder`; each can be pointed at a different model.
+- **LLM gateway:** our own small interface with swappable implementations: OpenAI-compatible HTTP (e.g. Ollama) and the official Anthropic SDK for Claude. Roles: `llm` (naming, descriptions, `unknown` cases) and `embedder`; each can be pointed at a different model. The default `llm` is a free local model (Ollama), so nothing leaves the machine; hosted models need the user's own API key. Chat subscriptions (Claude Pro, Copilot, Cursor) can't be used by an outside tool.
 - **Embedding manager:** user picks the model (see 6).
 - **Decider:** our own `decide(task_type, input, allowed_labels) -> {label, prob, all_probs, version}` (see 7).
 - **Store:** SQLite for local single-user mode. Learned rules live in the user's repo (`.flows/`); the tool's own storage holds only a deletable cache.
@@ -96,7 +96,7 @@ Slice 1 stack: Next.js 14 App Router on the frontend, Express 4 + TypeScript on 
 
 ### Phase 3: Live URL discovery (explorer, then inspector add-on)
 Source shows what the code can do; the live app shows **what the user actually sees**: conditional rendering, feature flags, role-based screens, and what is really reachable from the UI. Using both raises the odds that a flow is correct.
-- **Explorer (automated, read-only):** a Playwright/CDP agent starts at the URL and follows visible navigation, links and non-destructive forms. For each page it records what is rendered (visible text, buttons, fields, navigation) with a screenshot, plus the network calls the page made. The Decider picks the next action from a fixed action set; the LLM is only for ambiguous forms. Anything the Decider rates destructive (delete, pay, send) is never clicked. Candidate flows are tagged `origin: observed`.
+- **Explorer (automated, read-only):** a Playwright/CDP agent starts at the URL and follows visible navigation, links and non-destructive forms. For each page it records what is rendered (visible text, buttons, fields, navigation) with a screenshot, plus the network calls the page made. The Decider picks the next action from a fixed action set; the LLM is only for ambiguous forms. Anything the Decider rates destructive (delete, pay, send) is never clicked; neither is anything it rates `unknown`, or `safe` with low confidence (threshold in config): when unsure, the explorer treats the action as destructive. Candidate flows are tagged `origin: observed`.
 - **Cross-check with source:** an observed flow is matched to a source flow (UI: route and visible elements; API: method and path, with observed URLs like `/orders/123` matched to source route patterns like `/orders/:id`, inside the API side only). A match merges them as `origin: both` with status `confirmed`. Source flows never observed stay `verified`; observed flows with no source match are `observed-only` and shown for review.
 - **Login:** the user logs in themselves (session state kept locally) or points to credentials in env; the tool invents none.
 - **Inspector add-on (optional, off by default):** the user turns it on and uses the app by hand to capture flows the explorer cannot reach (multi-step data entry, role-specific paths). It feeds the same store and goes through the same cross-check, review and feedback. Hovering an element shows what the graph knows and lets the user correct it.
@@ -114,6 +114,7 @@ Decision order, stopping at the first that is sure: (1) plain rules, (2) embeddi
 - Shared steps (e.g. Login) are proposed as subflows; the user reviews them like any flow.
 - **Decision log and rejected-candidate list** with reasons.
 - Destructive-looking flows (delete, pay, send) are always shown for review regardless of confidence.
+- **Decider data from real texts:** rebuild the `destructive-risk` examples and labelled set from the sample apps' real UI and API texts, and re-measure against the 90% gate. Phase 1 baseline (bge-small, hand-written held-out set): `destructive-risk` 82% accuracy on the items it decides, 85% coverage, 2 of 20 destructive items called safe; `flow-category` 94% at 57% coverage.
 - **Exit:** zero fabricated routes/steps pass the verifier (planted-fake tests); flow precision measured by manual review.
 
 ### Phase 5: Flow UI
@@ -197,9 +198,10 @@ First release: Next.js 14 (App Router) frontend and Express 4 + TypeScript backe
 11. Subflows are reusable and user-editable; nesting depth cap of 3 is a proposal.
 
 ## 13. Open items
-- Embedding model, decided for now (2026-10-19): bge-small-en-v1.5 at fp32, from BAAI's own repo (MIT on the model card). It is the only candidate that met p95 < 100 ms at all three input sizes measured (spikes/latency/RESULTS.md); BGE-M3 and Qwen3-Embedding are not used for now. Still open: the entailment model and its license.
+- Embedding model, decided for now (2026-10-19): bge-small-en-v1.5 at fp32, from BAAI's own repo (MIT on the model card). It is the only candidate that met p95 < 100 ms at all three input sizes measured (spikes/latency/RESULTS.md); BGE-M3 and Qwen3-Embedding are not used for now. Still open: the entailment model and its license (chosen at the start of Phase 4).
 - Check maturity and licenses of ast-grep, ts-morph and the tree-sitter grammars.
 - Confirm the subflow nesting cap and whether to cut the Phase 7 drift monitor.
+- Hosted LLM check (left open when Phase 1 closed, 2026-10-19): the hosted path of the LLM gateway (Claude through the Anthropic SDK, or any OpenAI-compatible provider) is tested only against a fake server. A real call still needs a user's own API key; Phase 1 closed with the local model (Ollama `llama3.2:3b`) verified live.
 
 ## 14. First supported stack (slice 1)
 The user's app (used once the tool is complete) is a monorepo: `apps/web` (frontend role) and `apps/api` (backend role); sample apps are picked on the same stack.

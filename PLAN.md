@@ -47,7 +47,7 @@ The tool never generates or runs tests. It explores the live app only to discove
 ```
 
 Components:
-- **LLM gateway:** our own small interface with swappable implementations: OpenAI-compatible HTTP (e.g. Ollama) and the official Anthropic SDK for Claude. Roles: `llm` (naming, descriptions, `unknown` cases) and `embedder`; each can be pointed at a different model. The default `llm` is a free local model (Ollama), so nothing leaves the machine; hosted models need the user's own API key. Chat subscriptions (Claude Pro, Copilot, Cursor) can't be used by an outside tool.
+- **LLM gateway:** our own small interface with swappable implementations: OpenAI-compatible HTTP (e.g. Ollama) and the official Anthropic SDK for Claude. Roles: `llm` (naming, descriptions, `unknown` cases) and `embedder`; each can be pointed at a different model. The default `llm` is a free local model (Ollama), so nothing leaves the machine; hosted models need the user's own API key. Chat subscriptions (Claude Pro, Copilot, Cursor) can't be used by an outside tool. Recommended hosted option: OpenRouter with GLM 5.3 (`z-ai/glm-5.3`), which is OpenAI-compatible, so it needs config only; users should turn on OpenRouter's privacy setting that blocks providers which collect data (or require zero data retention), because by default it may route to providers that store prompts.
 - **Embedding manager:** user picks the model (see 6).
 - **Decider:** our own `decide(task_type, input, allowed_labels) -> {label, prob, all_probs, version}` (see 7).
 - **Store:** SQLite for local single-user mode. Learned rules live in the user's repo (`.flows/`); the tool's own storage holds only a deletable cache.
@@ -128,6 +128,7 @@ Decision order, stopping at the first that is sure: (1) plain rules, (2) embeddi
 - Feedback controls: correct, wrong, edit steps, missing step, never suggest again, comment.
 - Version history.
 - Export the reviewed flows as JSON (the flow schema) for a separate test tool.
+- **Delivery:** Flows ships as a TypeScript library with a CLI and an Agent Skill (SKILL.md) that tells the user's coding assistant how to run the CLI; the review canvas is a local web page the CLI opens. Inside an assistant, the assistant does the AI jobs (naming, descriptions, `unknown` cases) on the user's own plan, and Flows validates every answer by schema and by graph ID. Without an assistant (direct CLI use, unattended runs), Flows uses its own model: local by default, an API key optional. An MCP server (with MCP Apps for review inside the chat) comes later, only if users need Flows in chat apps without a command line.
 - **Exit:** a reviewer can approve or reject a flow from its evidence alone (usability pass with 2-3 QA users).
 
 ### Phase 7: Learning loop, evals, packaging (later)
@@ -135,7 +136,7 @@ Decision order, stopping at the first that is sure: (1) plain rules, (2) embeddi
 - Eval harness: labelled sets per decision type, precision/recall, calibration checks. (Candidate to cut: drift monitor of Decider vs human overrides.)
 - Staleness: on code change, flag flows that lost evidence.
 - Token and cost report per run.
-- Packaging: CLI + local app; README; sample project.
+- Packaging: TypeScript library (with a build step to JavaScript, since Node won't run `.ts` files from installed packages) + CLI + local app + Agent Skill; a setup command that downloads the embedding model ahead of time (some assistants block the network inside their sandbox); README; sample project.
 - **Exit:** install-to-first-flow works on a fresh machine.
 
 ## 6. Embedding model selection

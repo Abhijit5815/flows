@@ -1,0 +1,35 @@
+{
+  "app": "chessu",
+  "source": {
+    "repo": "https://github.com/dotnize/chessu",
+    "commit": "29968f023da244d6ae1ff10c09577b1b5d53c123",
+    "license": "MIT"
+  },
+  "roles": { "web": "client", "api": "server" },
+  "pages": [
+    { "path": "/", "file": "client/src/app/page.tsx" },
+    { "path": "/[code]", "file": "client/src/app/[code]/page.tsx" },
+    { "path": "/archive/[id]", "file": "client/src/app/archive/[id]/page.tsx" },
+    { "path": "/settings", "file": "client/src/app/settings/page.tsx" },
+    { "path": "/user/[name]", "file": "client/src/app/user/[name]/page.tsx" }
+  ],
+  "endpoints": [
+    { "method": "GET", "path": "/v1/games", "file": "server/src/routes/games.route.ts", "line": 7 },
+    { "method": "POST", "path": "/v1/games", "file": "server/src/routes/games.route.ts", "line": 7 },
+    { "method": "GET", "path": "/v1/games/:code", "file": "server/src/routes/games.route.ts", "line": 9 },
+    { "method": "GET", "path": "/v1/auth", "file": "server/src/routes/auth.route.ts", "line": 7 },
+    { "method": "PATCH", "path": "/v1/auth", "file": "server/src/routes/auth.route.ts", "line": 7 },
+    { "method": "POST", "path": "/v1/auth/guest", "file": "server/src/routes/auth.route.ts", "line": 10 },
+    { "method": "POST", "path": "/v1/auth/logout", "file": "server/src/routes/auth.route.ts", "line": 12 },
+    { "method": "POST", "path": "/v1/auth/register", "file": "server/src/routes/auth.route.ts", "line": 14 },
+    { "method": "POST", "path": "/v1/auth/login", "file": "server/src/routes/auth.route.ts", "line": 15 },
+    { "method": "GET", "path": "/v1/users/:name", "file": "server/src/routes/users.route.ts", "line": 6 }
+  ],
+  "notes": [
+    "Every endpoint is mounted under /v1 (server/src/server.ts:36), then /games, /auth or /users (server/src/routes/index.ts:9-11).",
+    "router.route(path).get(...).post(...) on one line gives one entry per method, all citing that line.",
+    "A router path of \"/\" adds nothing, so the path is /v1/games with no trailing slash.",
+    "Socket.IO events (server/src/socket/) are out of scope (PLAN.md §10) and not listed.",
+    "Not pages: layout.tsx, not-found.tsx, opengraph-image.png and robots.txt."
+  ]
+}

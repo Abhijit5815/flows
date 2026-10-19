@@ -1,0 +1,26 @@
+{
+  "app": "next-learn",
+  "source": {
+    "repo": "https://github.com/vercel/next-learn",
+    "commit": "e75f71499fd2bc2dbabf60992f423e07d33c15fd",
+    "license": "MIT"
+  },
+  "roles": { "web": "dashboard/final-example" },
+  "pages": [
+    { "path": "/", "file": "dashboard/final-example/app/page.tsx" },
+    { "path": "/login", "file": "dashboard/final-example/app/login/page.tsx" },
+    { "path": "/dashboard", "file": "dashboard/final-example/app/dashboard/(overview)/page.tsx" },
+    { "path": "/dashboard/customers", "file": "dashboard/final-example/app/dashboard/customers/page.tsx" },
+    { "path": "/dashboard/invoices", "file": "dashboard/final-example/app/dashboard/invoices/page.tsx" },
+    { "path": "/dashboard/invoices/create", "file": "dashboard/final-example/app/dashboard/invoices/create/page.tsx" },
+    { "path": "/dashboard/invoices/[id]/edit", "file": "dashboard/final-example/app/dashboard/invoices/[id]/edit/page.tsx" }
+  ],
+  "endpoints": [],
+  "notes": [
+    "Only dashboard/final-example is in scope; the repo's other examples are not.",
+    "(overview) is a route group, so app/dashboard/(overview)/page.tsx serves /dashboard.",
+    "There are no route handlers (app/**/route.ts) at this commit, so there are no endpoints.",
+    "Server actions in app/lib/actions.ts (createInvoice, updateInvoice, deleteInvoice, authenticate) are UI actions, not pages or endpoints.",
+    "Not pages: layout.tsx, loading.tsx, error.tsx, not-found.tsx, favicon.ico and opengraph-image.png."
+  ]
+}

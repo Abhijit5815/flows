@@ -1,0 +1,28 @@
+{
+  "app": "typescript-express-starter",
+  "source": {
+    "repo": "https://github.com/ljlm0402/typescript-express-starter",
+    "commit": "b25a95cd6816ba1d97b716bbc26972431b48db67",
+    "license": "MIT"
+  },
+  "roles": { "api": "lib/default" },
+  "pages": [],
+  "endpoints": [
+    { "method": "GET", "path": "/users", "file": "lib/default/src/routes/users.route.ts", "line": 17 },
+    { "method": "GET", "path": "/users/:id(\\d+)", "file": "lib/default/src/routes/users.route.ts", "line": 18 },
+    { "method": "POST", "path": "/users", "file": "lib/default/src/routes/users.route.ts", "line": 19 },
+    { "method": "PUT", "path": "/users/:id(\\d+)", "file": "lib/default/src/routes/users.route.ts", "line": 20 },
+    { "method": "DELETE", "path": "/users/:id(\\d+)", "file": "lib/default/src/routes/users.route.ts", "line": 21 },
+    { "method": "POST", "path": "/signup", "file": "lib/default/src/routes/auth.route.ts", "line": 17 },
+    { "method": "POST", "path": "/login", "file": "lib/default/src/routes/auth.route.ts", "line": 18 },
+    { "method": "POST", "path": "/logout", "file": "lib/default/src/routes/auth.route.ts", "line": 19 }
+  ],
+  "notes": [
+    "Only lib/default is in scope; the other templates under lib/ are not.",
+    "Route classes are created in lib/default/src/server.ts:8 and mounted in a loop at / (lib/default/src/app.ts:56-59).",
+    "UserRoute builds its paths from the class constant path = '/users' (lib/default/src/routes/users.route.ts:8); AuthRoute has no prefix.",
+    "Paths are the strings Express receives: `${this.path}/:id(\\\\d+)` in source becomes /users/:id(\\d+).",
+    "Not listed: app.use('/api-docs', swaggerUi.serve, ...) at lib/default/src/app.ts:75 mounts Swagger UI middleware, not a method route.",
+    "Not routes: src/http/*.http request samples and src/tests/*."
+  ]
+}

@@ -1,0 +1,9 @@
+[submodule "fixtures/samples/chessu"]
+	path = fixtures/samples/chessu
+	url = https://github.com/dotnize/chessu.git
+[submodule "fixtures/samples/typescript-express-starter"]
+	path = fixtures/samples/typescript-express-starter
+	url = https://github.com/ljlm0402/typescript-express-starter.git
+[submodule "fixtures/samples/next-learn"]
+	path = fixtures/samples/next-learn
+	url = https://github.com/vercel/next-learn.git

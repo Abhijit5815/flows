@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { basename, join, relative, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { ADAPTERS, adapterFor } from '../adapters/registry.ts';
@@ -11,13 +11,17 @@ import { modelDir } from '../embeddings/download.ts';
 import type { Graph } from '../graph/schema.ts';
 import { loadGraph, repoFile } from '../graph/store.ts';
 import { stackOf } from '../ingest/detect.ts';
+import { listFiles } from '../ingest/files.ts';
+import { isSource } from '../ingest/match.ts';
 import { CoverageSchema, scanRepo } from '../ingest/pipeline.ts';
+import { createGateway } from '../llm/create.ts';
+import { draftRule } from '../rules/draft.ts';
 import { addRule, loadRules, rulesFile, today } from '../rules/learned.ts';
 import { proposeRule } from '../rules/propose.ts';
 import { FlowsError } from '../shared/errors.ts';
 import { readCache } from '../shared/json-file.ts';
 import type { TraceEvent } from '../trace/event.ts';
-import { readTrace, traceFile } from '../trace/sink.ts';
+import { JsonlTraceSink, readTrace, traceFile } from '../trace/sink.ts';
 
 const USAGE = `usage: flows <command> [--project <dir>]
   init [--name <name>]                     create .flows/config.json in the project folder
@@ -29,6 +33,8 @@ const USAGE = `usage: flows <command> [--project <dir>]
   show <kind> [--json]                     what the last scan found: routes, pages, handlers, guards, ... or missed
   rule missed <path:line> [--save]         propose a rule that finds what the scan missed there (kept with --save)
   rule exclude <node-id>                   leave a node out of every scan ("not a flow")
+  rule draft --example <path:line>... [--save]   for code no adapter reads: the LLM drafts a rule, kept only if it
+                                           reproduces the examples exactly
   rule list                                the rules each repo has learned (<repo>/.flows/rules.json)
   models list                              the embedding model catalogue
   decide <task> <text>                     run the Decider once, all of the task's labels allowed
@@ -45,6 +51,7 @@ const { values, positionals } = parseArgs({
     last: { type: 'string' },
     json: { type: 'boolean', default: false },
     save: { type: 'boolean', default: false },
+    example: { type: 'string', multiple: true },
   },
 });
 
@@ -193,13 +200,26 @@ async function rule(project: Project, action: string | undefined, args: string[]
       console.log(`${args[0]} will be left out of every scan of ${owners[0].path}; run "flows scan"`);
       return;
     }
+    case 'draft': {
+      const examples = (values.example ?? []).map((place) => locate(project, place));
+      if (examples.length === 0) throw new FlowsError('usage: flows rule draft --example <path:line> [--example <path:line> ...] [--save]');
+      const repo = examples[0].repo;
+      if (examples.some((example) => example.repo !== repo)) throw new FlowsError('all examples must be in the same repo');
+      const dir = resolve(project.root, repo.path);
+      const sources = new Map(listFiles(dir).filter(isSource).map((path) => [path, readFileSync(join(dir, path), 'utf8')]));
+      const gateway = createGateway(project.config.llm, new JsonlTraceSink(traceFile(projectDataDir(project))));
+      const result = await draftRule(gateway, repo.role === 'api' ? 'route' : 'page', examples.map(({ file, line }) => `${file}:${line}`), sources);
+      if (!result.accepted) throw new FlowsError(`the drafted rule was rejected: ${result.reason}`);
+      console.log(`drafted rule (reproduces all ${examples.length} example(s)): ${JSON.stringify(result.rule)}`);
+      return saveOrHint(dir, result.rule);
+    }
     case 'list':
       for (const repo of project.config.repos) {
         for (const learned of loadRules(resolve(project.root, repo.path))) console.log(`${repo.role}  ${repo.path}  ${JSON.stringify(learned)}`);
       }
       return;
     default:
-      throw new FlowsError('usage: flows rule missed|exclude|list ...');
+      throw new FlowsError('usage: flows rule missed|exclude|draft|list ...');
   }
 }
 

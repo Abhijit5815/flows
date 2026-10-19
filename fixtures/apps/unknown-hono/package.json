@@ -1,0 +1,8 @@
+{
+  "name": "unknown-hono",
+  "private": true,
+  "description": "Flows fixture: an API on a framework Flows has no adapter for (Hono), for drafting rules from examples. Parsed only.",
+  "dependencies": {
+    "hono": "^4.6.0"
+  }
+}

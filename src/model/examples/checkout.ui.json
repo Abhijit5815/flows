@@ -1,0 +1,55 @@
+{
+  "schema_version": 0,
+  "id": "flow-checkout",
+  "name": "Pay for the items in the cart",
+  "category": "uncategorized",
+  "kind": "ui",
+  "origin": "source",
+  "status": "unverified",
+  "confidence": 0.41,
+  "enabled": false,
+  "destructive": "yes",
+  "priority": "high",
+  "tags": [],
+  "version": 1,
+  "steps": [
+    {
+      "id": "s1",
+      "kind": "subflow",
+      "claim": "Log in: the shop pages sit behind the auth middleware",
+      "subflow_ref": "flow-login",
+      "evidence": [{ "type": "code", "node_id": "web:guard:middleware", "ref": "middleware.ts:8" }],
+      "check": null,
+      "enabled": true
+    },
+    {
+      "id": "s2",
+      "kind": "ui",
+      "claim": "Open the cart",
+      "evidence": [{ "type": "code", "node_id": "web:page:/cart", "ref": "app/(shop)/cart/page.tsx:10" }],
+      "check": {
+        "kind": "ui",
+        "element": "Pay now",
+        "evidence": [{ "type": "code", "node_id": "web:element:pay-now", "ref": "app/(shop)/cart/pay-button.tsx:15" }]
+      },
+      "enabled": true
+    },
+    {
+      "id": "s3",
+      "kind": "ui",
+      "claim": "Press Pay now",
+      "evidence": [{ "type": "code", "node_id": "web:action:pay", "ref": "app/(shop)/cart/pay-button.tsx:9" }],
+      "check": null,
+      "enabled": true
+    },
+    {
+      "id": "s4",
+      "kind": "api",
+      "claim": "The pay action calls the payments endpoint",
+      "request": { "method": "POST", "path": "/api/v1/payments" },
+      "evidence": [{ "type": "code", "node_id": "web:api-call:pay", "ref": "app/(shop)/cart/actions.ts:21" }],
+      "check": null,
+      "enabled": true
+    }
+  ]
+}

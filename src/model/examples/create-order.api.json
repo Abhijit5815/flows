@@ -1,0 +1,55 @@
+{
+  "schema_version": 0,
+  "id": "flow-create-order",
+  "name": "Create an order and read it back",
+  "description": "An authenticated client creates an order, then fetches it by id.",
+  "category": "create-edit",
+  "kind": "api",
+  "origin": "source",
+  "status": "verified",
+  "confidence": 0.88,
+  "enabled": true,
+  "destructive": "no",
+  "priority": "medium",
+  "tags": ["orders"],
+  "version": 1,
+  "steps": [
+    {
+      "id": "s1",
+      "kind": "subflow",
+      "claim": "Log in first: the orders router requires a JWT",
+      "subflow_ref": "flow-api-login",
+      "evidence": [{ "type": "code", "node_id": "api:middleware:requireAuth", "ref": "src/routes/orders.routes.ts:9" }],
+      "check": null,
+      "enabled": true
+    },
+    {
+      "id": "s2",
+      "kind": "api",
+      "claim": "Create an order",
+      "request": { "method": "POST", "path": "/api/v1/orders" },
+      "evidence": [{ "type": "code", "node_id": "api:route:POST /api/v1/orders", "ref": "src/routes/orders.routes.ts:14" }],
+      "check": {
+        "kind": "api",
+        "status": 201,
+        "fields": ["success", "data.id"],
+        "evidence": [{ "type": "code", "node_id": "api:response:createOrder", "ref": "src/controllers/orders.controller.ts:37" }]
+      },
+      "enabled": true
+    },
+    {
+      "id": "s3",
+      "kind": "api",
+      "claim": "Read the new order by id",
+      "request": { "method": "GET", "path": "/api/v1/orders/:id" },
+      "evidence": [{ "type": "code", "node_id": "api:route:GET /api/v1/orders/:id", "ref": "src/routes/orders.routes.ts:15" }],
+      "check": {
+        "kind": "api",
+        "status": 200,
+        "fields": ["data.status"],
+        "evidence": [{ "type": "code", "node_id": "api:response:getOrder", "ref": "src/controllers/orders.controller.ts:52" }]
+      },
+      "enabled": true
+    }
+  ]
+}

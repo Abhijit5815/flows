@@ -1,0 +1,51 @@
+{
+  "schema_version": 0,
+  "id": "flow-login",
+  "name": "Log in with email and password",
+  "description": "A visitor opens the login page, submits the form and lands on the dashboard.",
+  "category": "auth",
+  "kind": "ui",
+  "origin": "source",
+  "status": "verified",
+  "confidence": 0.92,
+  "enabled": true,
+  "destructive": "no",
+  "priority": "high",
+  "tags": [],
+  "version": 1,
+  "steps": [
+    {
+      "id": "s1",
+      "kind": "ui",
+      "claim": "Open the login page",
+      "evidence": [{ "type": "code", "node_id": "web:page:/login", "ref": "app/(auth)/login/page.tsx:12" }],
+      "check": {
+        "kind": "ui",
+        "element": "Sign in",
+        "evidence": [{ "type": "code", "node_id": "web:element:login-submit", "ref": "app/(auth)/login/login-form.tsx:48" }]
+      },
+      "enabled": true
+    },
+    {
+      "id": "s2",
+      "kind": "ui",
+      "claim": "Submit the login form with an email and a password",
+      "evidence": [{ "type": "code", "node_id": "web:form:login", "ref": "app/(auth)/login/login-form.tsx:22" }],
+      "check": {
+        "kind": "ui",
+        "page": "/dashboard",
+        "evidence": [{ "type": "code", "node_id": "web:redirect:login-success", "ref": "app/(auth)/login/actions.ts:31" }]
+      },
+      "enabled": true
+    },
+    {
+      "id": "s3",
+      "kind": "api",
+      "claim": "The form's server action calls the login endpoint",
+      "request": { "method": "POST", "path": "/api/v1/auth/login" },
+      "evidence": [{ "type": "code", "node_id": "web:api-call:login", "ref": "app/(auth)/login/actions.ts:18" }],
+      "check": null,
+      "enabled": true
+    }
+  ]
+}

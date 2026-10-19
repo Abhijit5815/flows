@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { basename, join, resolve } from 'node:path';
+import { basename, join, relative, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { ADAPTERS, adapterFor } from '../adapters/registry.ts';
 import { addRepo, findRepo, initProject, loadProject, projectDataDir, setFramework, storageDir, type Project, type Repo } from '../config/project.ts';
@@ -12,6 +12,8 @@ import type { Graph } from '../graph/schema.ts';
 import { loadGraph, repoFile } from '../graph/store.ts';
 import { stackOf } from '../ingest/detect.ts';
 import { CoverageSchema, scanRepo } from '../ingest/pipeline.ts';
+import { addRule, loadRules, rulesFile, today } from '../rules/learned.ts';
+import { proposeRule } from '../rules/propose.ts';
 import { FlowsError } from '../shared/errors.ts';
 import { readCache } from '../shared/json-file.ts';
 import type { TraceEvent } from '../trace/event.ts';
@@ -25,6 +27,9 @@ const USAGE = `usage: flows <command> [--project <dir>]
   stack set <path> <framework|auto> [--role web|api]   pin a repo's framework, or go back to detection
   scan                                     build each repo's graph (files are parsed again only when they change)
   show <kind> [--json]                     what the last scan found: routes, pages, handlers, guards, ... or missed
+  rule missed <path:line> [--save]         propose a rule that finds what the scan missed there (kept with --save)
+  rule exclude <node-id>                   leave a node out of every scan ("not a flow")
+  rule list                                the rules each repo has learned (<repo>/.flows/rules.json)
   models list                              the embedding model catalogue
   decide <task> <text>                     run the Decider once, all of the task's labels allowed
   trace [--kind decision|llm_call] [--type <task>] [--last <n>] [--json]`;
@@ -39,6 +44,7 @@ const { values, positionals } = parseArgs({
     type: { type: 'string' },
     last: { type: 'string' },
     json: { type: 'boolean', default: false },
+    save: { type: 'boolean', default: false },
   },
 });
 
@@ -145,8 +151,61 @@ function show(project: Project, what: string): void {
   }
 }
 
+// A place the user points at ("apps/api/src/server.ts:17", from the project root) -> its repo and repo-relative file.
+function locate(project: Project, place: string): { repo: Repo; file: string; line: number } {
+  const match = /^(.+):([1-9]\d*)$/.exec(place);
+  if (match === null) throw new FlowsError(`"${place}" should look like path/to/file.ts:17`);
+  const absolute = resolve(project.root, match[1]);
+  const inside = project.config.repos
+    .map((repo) => ({ repo, file: relative(resolve(project.root, repo.path), absolute) }))
+    .filter(({ repo, file }) => !file.startsWith('..') && (values.role === undefined || repo.role === values.role))
+    .sort((a, b) => a.file.length - b.file.length);
+  if (inside.length === 0) throw new FlowsError(`${match[1]} is not inside a registered repo`);
+  if (inside.length > 1 && inside[0].file === inside[1].file) throw new FlowsError(`${match[1]} is in a repo registered as both web and api; add --role`);
+  return { ...inside[0], line: Number(match[2]) };
+}
+
+function saveOrHint(repoDir: string, rule: Parameters<typeof addRule>[1]): void {
+  if (!values.save) {
+    console.log('not saved: run the same command with --save to keep it');
+    return;
+  }
+  addRule(repoDir, rule);
+  console.log(`saved to ${rulesFile(repoDir)}; run "flows scan" to use it`);
+}
+
+async function rule(project: Project, action: string | undefined, args: string[]): Promise<void> {
+  switch (action) {
+    case 'missed': {
+      if (!args[0]) throw new FlowsError('usage: flows rule missed <path:line> [--save]');
+      const { repo, file, line } = locate(project, args[0]);
+      const proposal = await proposeRule(project, repo, { file, line });
+      console.log(`proposed rule: ${JSON.stringify(proposal.rule)}`);
+      console.log(`it adds ${proposal.finds.length} node(s):`);
+      for (const id of proposal.finds) console.log(`  ${id}`);
+      return saveOrHint(resolve(project.root, repo.path), proposal.rule);
+    }
+    case 'exclude': {
+      if (!args[0]) throw new FlowsError('usage: flows rule exclude <node-id>');
+      const owners = project.config.repos.filter((repo) => loadGraph(project, repo)?.nodes.some((node) => node.id === args[0]) && (values.role === undefined || repo.role === values.role));
+      if (owners.length !== 1) throw new FlowsError(owners.length === 0 ? `no scanned graph has ${args[0]}; run "flows scan" or check the id with "flows show"` : `${args[0]} is in more than one repo; add --role`);
+      addRule(resolve(project.root, owners[0].path), { type: 'exclude', node: args[0], added: today() });
+      console.log(`${args[0]} will be left out of every scan of ${owners[0].path}; run "flows scan"`);
+      return;
+    }
+    case 'list':
+      for (const repo of project.config.repos) {
+        for (const learned of loadRules(resolve(project.root, repo.path))) console.log(`${repo.role}  ${repo.path}  ${JSON.stringify(learned)}`);
+      }
+      return;
+    default:
+      throw new FlowsError('usage: flows rule missed|exclude|list ...');
+  }
+}
+
 async function run(): Promise<void> {
   const [command, sub, ...rest] = positionals;
+  if (command === 'rule') return rule(loadProject(root), sub, rest);
   switch (`${command ?? ''} ${command === 'repo' || command === 'models' || command === 'stack' ? (sub ?? '') : ''}`.trim()) {
     case 'init': {
       const project = initProject(root, values.name ?? basename(root));

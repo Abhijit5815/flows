@@ -68,7 +68,7 @@ function isResponse(expression: Node, responses: ReadonlySet<string>): boolean {
   return declaration !== undefined && responses.has(keyOf(declaration));
 }
 
-function extract({ facts, files, read, resolver, graph }: ExtractContext): Unrecognised[] {
+function extract({ facts, files, read, resolver, graph, guards }: ExtractContext): Unrecognised[] {
   const notes: Unrecognised[] = [];
   const kinds = new Map<string, 'app' | 'router'>();
   const registrations: Registration[] = [];
@@ -104,13 +104,18 @@ function extract({ facts, files, read, resolver, graph }: ExtractContext): Unrec
       const call = resolver.nodeAt(file, fact.start, fact.end);
       if (!Node.isCallExpression(call)) continue;
       const callee = call.getExpression();
-      if (!Node.isPropertyAccessExpression(callee)) continue;
+      if (!Node.isPropertyAccessExpression(callee) && !Node.isElementAccessExpression(callee)) continue;
       // A loop over a list Flows can't read is evaluated once; whatever depends on it stays unknown and is reported.
       for (const env of resolver.loops(call) ?? [NO_ENV]) {
         const routers = routersOf(callee.getExpression(), env);
         if (routers.length === 0) continue; // not a router: axios.get, io.use, a supertest agent
-        if (fact.rule === 'route') register(routers, callee.getName(), call.getArguments(), callee.getNameNode(), env);
-        if (fact.rule === 'route-chain') {
+        if (fact.rule === 'route') {
+          // router.get(...), or router[method](...) (a learned rule) with the method read from source
+          const name = Node.isPropertyAccessExpression(callee) ? callee.getNameNode() : callee.getArgumentExpressionOrThrow();
+          const method = Node.isPropertyAccessExpression(callee) ? callee.getName() : resolver.string(name, env);
+          if (method !== undefined && ROUTE_METHODS.has(method)) register(routers, method, call.getArguments(), name, env);
+        }
+        if (fact.rule === 'route-chain' && Node.isPropertyAccessExpression(callee)) {
           // router.route(path).get(...).post(...): one route per method in the chain
           const [path] = call.getArguments();
           for (let link: Node = call; ; ) {
@@ -191,7 +196,7 @@ function extract({ facts, files, read, resolver, graph }: ExtractContext): Unrec
     if (declaration === undefined) return; // library middleware: express.json(), cors(), helmet()
     const where = resolver.where(declaration);
     const name = qualifiedName(declaration) ?? `inline ${where.file}:${where.line}`;
-    const guard = GUARD_NAME.test(name) || GUARD_BODY.test(declaration.getText());
+    const guard = guards.includes(name) || GUARD_NAME.test(name) || GUARD_BODY.test(declaration.getText());
     graph.edge(route, graph.add(keyOf(declaration), { kind: guard ? 'guard' : 'middleware', name, ...where, attrs: { name } }), guard ? 'guarded-by' : 'uses');
     if (Node.isCallExpression(node)) for (const arg of node.getArguments()) addSchema(route, arg, env); // validate(schema)
   };

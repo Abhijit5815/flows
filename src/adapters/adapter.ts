@@ -20,6 +20,7 @@ export type ExtractContext = {
   read: (path: string) => string;
   resolver: Resolver;
   graph: GraphBuilder;
+  guards: readonly string[]; // names the user marked as auth guards (learned rules)
 };
 
 // One per framework. Adding a framework means adding an adapter, not changing the pipeline.

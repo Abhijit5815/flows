@@ -1,0 +1,107 @@
+{
+  "flows": [
+    {
+      "id": "api-65254e5f",
+      "name": "GET /api/v1/admin/stats",
+      "steps": [
+        "subflow: Log in first: guarded by requireAuth, requireRole -> api-da0be8b0",
+        "api: Call GET /api/v1/admin/stats (handled by AdminController.stats) | check 200 users orders"
+      ]
+    },
+    {
+      "id": "api-f62f114c",
+      "name": "GET /api/v1/orders/:orderId",
+      "steps": [
+        "subflow: Log in first: guarded by requireAuth -> api-da0be8b0",
+        "api: Call GET /api/v1/orders/:orderId (handled by orders.getById) | check 200 success data error timestamp"
+      ]
+    },
+    {
+      "id": "api-e1914f5a",
+      "name": "DELETE /api/v1/orders/:orderId",
+      "steps": [
+        "subflow: Log in first: guarded by requireAuth -> api-da0be8b0",
+        "api: Call DELETE /api/v1/orders/:orderId (handled by orders.cancel) | check 204"
+      ]
+    },
+    {
+      "id": "api-c9f7e9b1",
+      "name": "GET /api/v1/orders",
+      "steps": [
+        "subflow: Log in first: guarded by requireAuth -> api-da0be8b0",
+        "api: Call GET /api/v1/orders (handled by orders.list) | check 200 success data error timestamp"
+      ]
+    },
+    {
+      "id": "api-596993d6",
+      "name": "POST /api/v1/orders",
+      "steps": [
+        "subflow: Log in first: guarded by requireAuth -> api-da0be8b0",
+        "api: Call POST /api/v1/orders (handled by orders.create) | check 201 success data error timestamp"
+      ]
+    },
+    {
+      "id": "api-275479e3",
+      "name": "GET /api/v1/products",
+      "steps": [
+        "api: Call GET /api/v1/products | check 200 resource items"
+      ]
+    },
+    {
+      "id": "api-667935b6",
+      "name": "GET /api/v1/products/:id",
+      "steps": [
+        "api: Call GET /api/v1/products/:id | check 200 resource id"
+      ]
+    },
+    {
+      "id": "api-cbe3b0b1",
+      "name": "POST /api/v1/users/register",
+      "steps": [
+        "api: Call POST /api/v1/users/register (handled by register) | check 201 success data error timestamp"
+      ]
+    },
+    {
+      "id": "api-da0be8b0",
+      "name": "POST /api/v1/users/login",
+      "steps": [
+        "api: Call POST /api/v1/users/login (handled by login) | check 200 success data error timestamp"
+      ]
+    },
+    {
+      "id": "api-2208a375",
+      "name": "GET /api/v1/users/me",
+      "steps": [
+        "subflow: Log in first: guarded by requireAuth -> api-da0be8b0",
+        "api: Call GET /api/v1/users/me (handled by me) | check 200 success data error timestamp"
+      ]
+    },
+    {
+      "id": "api-6c14f3dc",
+      "name": "GET /api/v1/users/:id",
+      "steps": [
+        "subflow: Log in first: guarded by requireAuth -> api-da0be8b0",
+        "api: Call GET /api/v1/users/:id (handled by getById) | check 200 success data error timestamp"
+      ]
+    },
+    {
+      "id": "api-4f5ff1b3",
+      "name": "PATCH /api/v1/users/:id",
+      "steps": [
+        "subflow: Log in first: guarded by requireAuth -> api-da0be8b0",
+        "api: Call PATCH /api/v1/users/:id (handled by update) | check 200 success data error timestamp"
+      ]
+    },
+    {
+      "id": "api-9f461fb2",
+      "name": "GET /health",
+      "steps": [
+        "api: Call GET /health | check 200 status"
+      ]
+    }
+  ],
+  "skipped": [
+    "api:route:ALL /api/v1/admin/maintenance: ALL answers every method, so there is no single request to make"
+  ],
+  "notes": []
+}

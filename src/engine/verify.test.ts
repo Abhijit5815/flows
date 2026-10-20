@@ -1,0 +1,134 @@
+import { after, test } from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { addRepo, DEFAULT_THRESHOLD } from '../config/project.ts';
+import type { Decider } from '../decider/decider.ts';
+import { EntailmentDecider } from '../decider/entailment.ts';
+import { lookup } from '../graph/lookup.ts';
+import type { Graph } from '../graph/schema.ts';
+import { scanRepo } from '../ingest/pipeline.ts';
+import type { Flow } from '../model/flow.ts';
+import { liveModelsDir, liveSkip } from '../shared/testing/live.ts';
+import { tempProject } from '../shared/testing/project.ts';
+import { MemoryTraceSink } from '../trace/sink.ts';
+import { candidates } from './candidates.ts';
+import { judge } from './judge.ts';
+import { API_FAKES, UI_FAKES, type Fake, type Kit } from './planted.ts';
+import { reachability, unreachableBecause } from './reach.ts';
+import { addLoginSubflows } from './subflows.ts';
+import { verifyFlows, type VerifyContext } from './verify.ts';
+
+const fixtures = fileURLToPath(new URL('../../fixtures/apps/', import.meta.url));
+const tmp = mkdtempSync(join(tmpdir(), 'flows-verify-'));
+after(() => rmSync(tmp, { recursive: true, force: true }));
+
+type Fixture = { graph: Graph; genuine: Flow[] };
+const scanned = new Map<string, Promise<Fixture>>();
+function fixture(app: string, role: 'web' | 'api'): Promise<Fixture> {
+  if (!scanned.has(app)) {
+    scanned.set(app, (async () => {
+      const project = tempProject(join(tmp, app));
+      const { graph } = await scanRepo(project, addRepo(project, join(fixtures, app), role).config.repos[0]);
+      assert.ok(graph);
+      return { graph, genuine: addLoginSubflows(candidates(graph).flows, lookup(graph)).flows };
+    })());
+  }
+  return scanned.get(app) as Promise<Fixture>; // safe: set just above
+}
+
+// A grounding Decider that supports nothing, and counts how often it is asked.
+function refusing(): Decider & { asked: number } {
+  return {
+    asked: 0,
+    async decide() {
+      this.asked++;
+      return { label: 'unsupported', prob: 1, all_probs: { supported: 0, unsupported: 1 }, version: 'refusing' };
+    },
+  };
+}
+
+function kitFor(flows: readonly Flow[]): Kit {
+  let n = 0;
+  const flow = (name: string) => {
+    const found = flows.find((candidate) => candidate.name === name);
+    if (found === undefined) throw new Error(`no genuine flow named "${name}"`);
+    return found;
+  };
+  return { flow, copy: (name) => ({ ...structuredClone(flow(name)), id: `fake-${++n}` }) };
+}
+
+// What the verifier, reachability and the judge make of these flows, by flow id (or "rejected" when nothing survived).
+async function outcomes(inputs: readonly unknown[], { graph }: Fixture, grounding: Decider) {
+  const nodes = lookup(graph);
+  const context: VerifyContext = { graph, nodes, grounding, maxDepth: 3 };
+  const reach = reachability(graph, nodes);
+  return (await verifyFlows(inputs, context)).map((result) => {
+    if (!result.ok) return { status: 'rejected', reasons: result.reasons };
+    const { status, reasons } = judge({ claims: result.claims, proven: result.proven, unreachable: unreachableBecause(result.flow, reach), destructive: 'no', verdict: undefined, sourceOnlyWeight: 0.9 });
+    return { status, reasons: [...result.reasons, ...reasons] };
+  });
+}
+
+for (const [app, role] of [['express-basic', 'api'], ['next-basic', 'web']] as const) {
+  test(`${app}: every generated flow is verified, without asking the grounding model`, async () => {
+    const found = await fixture(app, role);
+    const grounding = refusing();
+    const results = await outcomes(found.genuine, found, grounding);
+    assert.deepEqual(results.filter((result) => result.status !== 'verified'), []);
+    assert.equal(grounding.asked, 0, 'template claims are proven by rule');
+  });
+}
+
+// PLAN.md Phase 4 exit: zero fabricated routes or steps pass the verifier.
+async function plant(fakes: readonly Fake[], found: Fixture, grounding: Decider, report: (line: string) => void): Promise<number> {
+  let passed = 0;
+  for (const fake of fakes) {
+    const planted = fake.make(kitFor(found.genuine));
+    const results = (await outcomes([...found.genuine, ...planted], found, grounding)).slice(found.genuine.length);
+    for (const result of results) {
+      if (result.status === 'verified') passed++;
+      report(`${result.status === 'verified' ? 'PASSED' : result.status.padEnd(11)}  ${fake.name}: ${result.reasons[0] ?? ''}`);
+    }
+  }
+  return passed;
+}
+
+const SUITES = [['express-basic', 'api', API_FAKES], ['next-basic', 'web', UI_FAKES]] as const;
+
+test('planted fakes: none passes the verifier (stand-in grounding model)', async (t) => {
+  let planted = 0;
+  let passed = 0;
+  for (const [app, role, fakes] of SUITES) {
+    passed += await plant(fakes, await fixture(app, role), refusing(), (line) => t.diagnostic(line));
+    planted += fakes.length;
+  }
+  t.diagnostic(`${planted} planted, ${passed} passed`);
+  assert.equal(passed, 0);
+});
+
+test('live: planted fakes, none passes the verifier with the real entailment model', { skip: liveSkip }, async (t) => {
+  const grounding = new EntailmentDecider({ modelsDir: liveModelsDir, trace: new MemoryTraceSink(), threshold: DEFAULT_THRESHOLD });
+  let planted = 0;
+  let passed = 0;
+  for (const [app, role, fakes] of SUITES) {
+    passed += await plant(fakes, await fixture(app, role), grounding, (line) => t.diagnostic(line));
+    planted += fakes.length;
+  }
+  t.diagnostic(`${planted} planted, ${passed} passed`);
+  assert.equal(passed, 0);
+});
+
+test('the reasons name what was wrong: the subflow cycle and the nesting cap', async () => {
+  const found = await fixture('express-basic', 'api');
+  const reasons = async (name: string) => {
+    const fake = API_FAKES.find((candidate) => candidate.name === name);
+    assert.ok(fake);
+    return (await outcomes([...found.genuine, ...fake.make(kitFor(found.genuine))], found, refusing())).slice(found.genuine.length).flatMap((result) => result.reasons);
+  };
+  assert.ok((await reasons('two login flows that need each other (a cycle)')).some((reason) => reason.includes('a cycle')));
+  assert.ok((await reasons('login flows nested five deep')).some((reason) => reason.includes('nest 4 deep; the cap is 3')));
+  assert.ok((await reasons('a subflow that does not log in')).some((reason) => reason.includes('is not a login flow')));
+});

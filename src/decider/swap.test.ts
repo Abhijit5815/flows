@@ -36,6 +36,6 @@ test('live: swapping bge-small for BGE-M3 rebuilds the index, refits calibration
   assert.match(m3.version, /bge-m3/);
   assert.notEqual(m3Keys[0], smallKeys[0], 'example vectors were rebuilt for the new model');
   assert.notEqual(m3Keys[1], smallKeys[1], 'calibration was refitted for the new model');
-  const versions = new Set(readTrace(trace).map((event) => event.model_version));
+  const versions = new Set(readTrace(trace).flatMap((event) => (event.kind === 'decision' ? [event.model_version] : [])));
   assert.deepEqual(versions, new Set([small.version, m3.version]), 'the trace shows which model made each decision');
 });

@@ -18,6 +18,8 @@ export const LearnedRuleSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('guard'), scope: z.string().min(1), name: z.string().min(1), example: Place, added: Added }),
   // "Not a flow": a graph node left out of every scan.
   z.object({ type: z.literal('exclude'), node: z.string().min(1), added: Added }),
+  // A reviewer's verdict on a generated flow, by its id; the judge applies it on the next scan.
+  z.object({ type: z.literal('verdict'), flow: z.string().min(1), verdict: z.enum(['correct', 'wrong']), comment: z.string().min(1).optional(), added: Added }),
   // Drafted from marked examples for code no adapter reads: every match becomes a route (api) or a page (web),
   // read from the pattern's metavariables.
   z.object({

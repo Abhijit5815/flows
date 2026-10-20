@@ -35,6 +35,15 @@ export const TraceEventSchema = z.discriminatedUnion('kind', [
     }),
     tokens: z.object({ input: z.int().nonnegative(), output: z.int().nonnegative() }).nullable(),
   }),
+  // PLAN.md Phase 4 decision log: a candidate skipped, a flow's verification, a flow's judgement.
+  z.object({
+    ...Common,
+    kind: z.literal('verdict'),
+    stage: z.enum(['candidates', 'verifier', 'judge']),
+    subject: z.string().min(1), // a flow id, or the node a skipped candidate came from
+    outcome: z.string().min(1),
+    reasons: z.array(z.string()),
+  }),
 ]);
 
 export type TraceEvent = z.infer<typeof TraceEventSchema>;

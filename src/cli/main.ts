@@ -77,6 +77,7 @@ function formatEvent(event: TraceEvent): string {
   if (event.kind === 'decision') {
     return `${event.at}  decision  ${event.decision_type}  ${event.label} (${event.source}, p=${Math.max(...Object.values(event.probs)).toFixed(2)})  ${event.model_version}  ${JSON.stringify(event.input)}`;
   }
+  if (event.kind === 'verdict') return `${event.at}  verdict  ${event.stage}  ${event.subject}  ${event.outcome}${event.reasons.length > 0 ? `  ${event.reasons.join('; ')}` : ''}`;
   const tokens = event.tokens ? `tokens ${event.tokens.input}/${event.tokens.output}` : 'no token count';
   return `${event.at}  llm_call  ${event.purpose}  ${event.llm_call.ok ? 'ok' : `failed: ${event.llm_call.error}`}  ${event.model_version}  ${tokens}`;
 }

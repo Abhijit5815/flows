@@ -50,14 +50,14 @@ Components:
 - **LLM gateway:** our own small interface with swappable implementations: OpenAI-compatible HTTP (e.g. Ollama) and the official Anthropic SDK for Claude. Roles: `llm` (naming, descriptions, `unknown` cases) and `embedder`; each can be pointed at a different model. The default `llm` is a free local model (Ollama), so nothing leaves the machine; hosted models need the user's own API key. Chat subscriptions (Claude Pro, Copilot, Cursor) can't be used by an outside tool. Recommended hosted option: OpenRouter with GLM 5.3 (`z-ai/glm-5.3`), which is OpenAI-compatible, so it needs config only; users should turn on OpenRouter's privacy setting that blocks providers which collect data (or require zero data retention), because by default it may route to providers that store prompts.
 - **Embedding manager:** user picks the model (see 6).
 - **Decider:** our own `decide(task_type, input, allowed_labels) -> {label, prob, all_probs, version}` (see 7).
-- **Store:** SQLite for local single-user mode. Learned rules live in the user's repo (`.flows/`); the tool's own storage holds only a deletable cache.
+- **Store:** SQLite for local single-user mode, from Phase 5 (human edits, version history); until then generated flows are per-repo JSON files in the deletable cache, since they can be rebuilt from source. Learned rules and review verdicts live in the user's repo (`.flows/`); the tool's own storage holds only a deletable cache.
 - **Trace:** append-only provenance log for every decision and model call.
 
 ## 4. Data model (sketch)
 - `Project`, `Repo(role: web|api)` (a monorepo can register `apps/web` and `apps/api` as two roles), `Environment(url)` for the live app
 - `GraphNode` / `GraphEdge` for the UI graph and the API graph, each with `evidence` (file:line). No edges between the two graphs.
 - `Flow { id, name, category, kind: ui|api, origin: source|observed|both, status, confidence, enabled, priority, tags, version }`
-- `Step { flow_id, order, kind: ui|api|subflow, claim, check, evidence[], enabled, subflow_ref? }`. A `subflow` step points to another flow (e.g. Login), so common flows are defined once and reused. A flow used by many others is `shared`. References must not form cycles; nesting depth capped (proposal: 3). `check` is the expected result taken from source (page/element after a UI action, status and response fields for an API call); empty if source is silent.
+- `Step { flow_id, order, kind: ui|api|subflow, claim, check, evidence[], enabled, subflow_ref? }`. A `subflow` step points to another flow (e.g. Login), so common flows are defined once and reused. A flow used by many others is `shared`. References must not form cycles; nesting depth capped at 3 (configurable). `check` is the expected result taken from source (page/element after a UI action, status and response fields for an API call); empty if source is silent.
 - `Evidence { type: code|network|dom|screenshot, ref }` (network/dom/screenshot only for observed flows)
 - `Category { id, name, color, editable }` (user-defined; defaults provided)
 - `Feedback { flow_id/step_id, verdict, comment }`, `Rule { scope, pattern|exclusion }`
@@ -145,7 +145,7 @@ Decision order, stopping at the first that is sure: (1) plain rules, (2) embeddi
 - No model weights are bundled; they are downloaded on first use from the original source, with checksum and progress.
 - Remote embeddings via any OpenAI-compatible endpoint as an option.
 - Switching models marks the index stale and re-indexes; calibrations tied to the old model are re-fitted.
-- The same model serves code search and the Decider. A separate small entailment (BERT-class) model is used for the grounding check; its license is also to be confirmed.
+- The same model serves code search and the Decider. A separate small entailment (BERT-class) model is used for the grounding check: cross-encoder/nli-deberta-v3-xsmall (see 13).
 
 ## 7. Decider (own implementation)
 Decisions covered: route class (user-facing / internal), flow category, event noise vs relevant, duplicate flow, destructive-action risk, claim-vs-evidence grounding (entailment model), whether the LLM needs to be called.
@@ -196,12 +196,15 @@ First release: Next.js 14 (App Router) frontend and Express 4 + TypeScript backe
 8. UI flows and API flows are separate and never linked to each other. Both inputs (source and live URL) feed each.
 9. Parsing is static only in v1. Learned rules live in the user's repo (`.flows/`).
 10. Flows are test-framework-agnostic.
-11. Subflows are reusable and user-editable; nesting depth cap of 3 is a proposal.
+11. Subflows are reusable and user-editable; nesting depth cap of 3 (confirmed 2026-10-20).
 
 ## 13. Open items
-- Embedding model, decided for now (2026-10-19): bge-small-en-v1.5 at fp32, from BAAI's own repo (MIT on the model card). It is the only candidate that met p95 < 100 ms at all three input sizes measured (spikes/latency/RESULTS.md); BGE-M3 and Qwen3-Embedding are not used for now. Still open: the entailment model and its license (chosen at the start of Phase 4).
+- Embedding model, decided for now (2026-10-19): bge-small-en-v1.5 at fp32, from BAAI's own repo (MIT on the model card). It is the only candidate that met p95 < 100 ms at all three input sizes measured (spikes/latency/RESULTS.md); BGE-M3 and Qwen3-Embedding are not used for now.
 - Parser tools, decided 2026-10-19: ast-grep (`@ast-grep/napi`, MIT) for declarative pattern rules and ts-morph (MIT; bundles its own TypeScript 6.0.2, so the project's TypeScript 7 doesn't affect it) for resolving constants, imports and prefixes. The tree-sitter TypeScript grammar is not used directly (its npm package was last released in 2024 and needs an older tree-sitter). Spike: spikes/parsers/RESULTS.md.
-- Confirm the subflow nesting cap and whether to cut the Phase 7 drift monitor.
+- Entailment model, decided 2026-10-20: cross-encoder/nli-deberta-v3-xsmall at fp32, from the publisher's own repo (Apache-2.0 on the model card; trained on SNLI and MultiNLI only). Measured: p95 7.3 ms per claim on CPU.
+- Subflow nesting cap, confirmed 2026-10-20: 3, in config.
+- Flow store, decided 2026-10-20: per-repo JSON files in the cache until Phase 5 brings SQLite.
+- Still open: whether to cut the Phase 7 drift monitor.
 - Hosted LLM check (left open when Phase 1 closed, 2026-10-19): the hosted path of the LLM gateway (Claude through the Anthropic SDK, or any OpenAI-compatible provider) is tested only against a fake server. A real call still needs a user's own API key; Phase 1 closed with the local model (Ollama `llama3.2:3b`) verified live.
 
 ## 14. First supported stack (slice 1)

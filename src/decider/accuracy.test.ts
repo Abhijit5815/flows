@@ -15,11 +15,6 @@ import { loadBuiltInTasks, testHalf } from './task.ts';
 // Provisional gate from the Phase 1 plan: when the Decider does decide, it is right at least 90% of the time.
 const GATE = 0.9;
 
-// Types accepted below the gate for now; each reason says where the fix is planned. Their numbers still print.
-const ACCEPTED_BELOW_GATE: Record<string, string> = {
-  'destructive-risk': 'Phase 1 baseline is 82%; rebuilt from real sample-app texts in Phase 4 (PLAN.md)',
-};
-
 const cacheDir = mkdtempSync(join(tmpdir(), 'flows-accuracy-'));
 after(() => rmSync(cacheDir, { recursive: true, force: true }));
 
@@ -33,7 +28,7 @@ test('live: Decider accuracy on the held-out half of each labelled set', { skip:
 
   // One subtest per type, so one type's result never hides another's.
   for (const task of tasks) {
-    await t.test(task.task, { todo: ACCEPTED_BELOW_GATE[task.task] }, async (st) => {
+    await t.test(task.task, async (st) => {
       const results = [];
       for (const item of testHalf(task)) results.push({ item, decision: await decider.decide(task.task, item.text, task.labels) });
       const decided = results.filter((result) => result.decision.label !== UNKNOWN);

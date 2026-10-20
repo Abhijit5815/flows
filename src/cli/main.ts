@@ -3,12 +3,17 @@ import { basename, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { ADAPTERS, adapterFor } from '../adapters/registry.ts';
-import { addRepo, findRepo, initProject, loadProject, projectDataDir, setFramework, storageDir, type Project, type Repo } from '../config/project.ts';
-import { createDecider } from '../decider/create.ts';
+import { addRepo, categories, findRepo, initProject, loadProject, projectDataDir, setFramework, storageDir, type Project, type Repo } from '../config/project.ts';
+import { createDecider, createGrounding } from '../decider/create.ts';
 import { loadBuiltInTasks } from '../decider/task.ts';
 import { CATALOGUE } from '../embeddings/catalogue.ts';
 import { createEmbeddingProvider } from '../embeddings/create.ts';
 import { modelDir } from '../embeddings/download.ts';
+import { buildFlows, type EngineDeps } from '../engine/engine.ts';
+import type { Verdict } from '../engine/judge.ts';
+import { OptionalLlm } from '../engine/llm.ts';
+import { loadFlows, saveFlows, type FlowSet } from '../engine/store.ts';
+import { stepLine } from '../engine/views.ts';
 import type { Graph } from '../graph/schema.ts';
 import { loadGraph, repoFile } from '../graph/store.ts';
 import { stackOf } from '../ingest/detect.ts';
@@ -31,8 +36,12 @@ const USAGE = `usage: flows <command> [--project <dir>]
   repo list
   stack                                    the framework found for each repo, and why
   stack set <path> <framework|auto> [--role web|api]   pin a repo's framework, or go back to detection
-  scan                                     build each repo's graph (files are parsed again only when they change)
-  show <kind> [--json]                     what the last scan found: routes, pages, handlers, guards, ... or missed
+  scan                                     build each repo's graph (files are parsed again only when they change),
+                                           then its flows
+  show <kind> [--json]                     what the last scan found: routes, pages, handlers, guards, ... missed,
+                                           or flows, rejected (with reasons) and unreachable (code no entry reaches)
+  review <flow-id> correct|wrong [--comment <text>] [--repo <path>]   a reviewer's verdict, kept in the repo's
+                                           rules; the next scan applies it (--repo when two repos have that id)
   rule missed <path:line> [--save]         propose a rule that finds what the scan missed there (kept with --save)
   rule exclude <node-id>                   leave a node out of every scan ("not a flow")
   rule draft --example <path:line>... [--save]   for code no adapter reads: the LLM drafts a rule, kept only if it
@@ -58,6 +67,8 @@ const { values, positionals } = parseArgs({
     example: { type: 'string', multiple: true },
     keys: { type: 'string' },
     samples: { type: 'string' },
+    comment: { type: 'string' },
+    repo: { type: 'string' },
   },
 });
 
@@ -113,8 +124,34 @@ function showStacks(project: Project, repos: readonly Repo[]): void {
   }
 }
 
+// The verdicts a repo's rules hold, by flow id; the latest one counts.
+const verdictsOf = (project: Project, repo: Repo): Map<string, Verdict> =>
+  new Map(loadRules(resolve(project.root, repo.path)).flatMap((rule) => (rule.type === 'verdict' ? [[rule.flow, rule.verdict] as const] : [])));
+
+function engineDeps(project: Project, embedder: ReturnType<typeof createEmbeddingProvider>): EngineDeps {
+  const trace = new JsonlTraceSink(traceFile(projectDataDir(project)));
+  return {
+    decider: createDecider(project, progress(), embedder),
+    grounding: createGrounding(project, progress()),
+    llm: new OptionalLlm(createGateway(project.config.llm, trace), join(projectDataDir(project), 'llm-cache.json'), (reason) =>
+      console.log(`  the LLM is off for the rest of this scan, so names and unknown categories come from source: ${reason}`),
+    ),
+    trace,
+    categories: categories(project.config),
+    categoryLabels: loadBuiltInTasks().find((task) => task.task === 'flow-category')?.labels ?? [],
+    config: project.config.engine,
+  };
+}
+
+function flowSummary(set: FlowSet): string {
+  const count = (status: string) => set.flows.filter((flow) => flow.status === status).length;
+  const held = set.flows.filter((flow) => flow.destructive !== 'no' && !flow.enabled && flow.status !== 'rejected').length;
+  return `  flows: ${set.flows.length} (${['verified', 'unverified', 'unreachable', 'rejected'].map((status) => `${count(status)} ${status}`).join(', ')}), ${set.rejected.length} candidates rejected, ${held} held for review (destructive or unsure); see "flows show flows"`;
+}
+
 async function scanAll(project: Project): Promise<void> {
   const embedder = createEmbeddingProvider(project.config.embedder, join(storageDir(project), 'models'), progress());
+  const engine = engineDeps(project, embedder);
   const { min_similarity: minSimilarity, limit } = project.config.possibly_missed;
   for (const repo of project.config.repos) {
     const { stack, graph, coverage, ms } = await scanRepo(project, repo, { embedder, possiblyMissed: { minSimilarity, limit } });
@@ -132,7 +169,62 @@ async function scanAll(project: Project): Promise<void> {
     if (coverage.unrecognised.length > 0) console.log(`  unrecognised (${coverage.unrecognised.length}):`);
     for (const note of coverage.unrecognised) console.log(`    ${note.file}:${note.line}  ${note.reason}`);
     if (coverage.missed.length > 0) console.log(`  possibly missed: ${coverage.missed.length}; see "flows show missed" (listed for review, never added to the graph)`);
+    const set = await buildFlows(graph, verdictsOf(project, repo), engine);
+    saveFlows(project, repo, set);
+    console.log(flowSummary(set));
+    for (const note of set.notes) console.log(`    ${note}`);
   }
+}
+
+// The last scan's flows: status, confidence, id, name, category and each step with its evidence; then the precision
+// of what reviewers marked.
+function showFlows(project: Project, what: 'flows' | 'rejected' | 'unreachable'): void {
+  for (const repo of project.config.repos) {
+    const set = loadFlows(project, repo);
+    if (set === undefined) {
+      console.log(`${repo.role}  ${repo.path}: no flows yet; run "flows scan"`);
+      continue;
+    }
+    if (values.json) {
+      const rows = what === 'flows' ? set.flows : what === 'rejected' ? [...set.flows.filter((flow) => flow.status === 'rejected'), ...set.rejected] : set.unreachable;
+      for (const row of rows) console.log(JSON.stringify(row));
+      continue;
+    }
+    console.log(`${repo.role}  ${repo.path}`);
+    if (what === 'unreachable') {
+      for (const id of set.unreachable) console.log(`  ${id}`);
+      continue;
+    }
+    if (what === 'rejected') {
+      for (const flow of set.flows.filter((candidate) => candidate.status === 'rejected')) console.log(`  ${flow.id}  ${flow.name}: ${(set.reasons[flow.id] ?? []).join('; ')}`);
+      for (const rejected of set.rejected) console.log(`  ${rejected.subject}  ${rejected.name}: ${rejected.reasons.join('; ')}`);
+      continue;
+    }
+    for (const flow of set.flows) {
+      const review = flow.destructive !== 'no' && !flow.enabled && flow.status !== 'rejected' ? `  REVIEW: destructive ${flow.destructive}` : '';
+      console.log(`  ${flow.status.padEnd(11)} ${flow.confidence.toFixed(2)}  ${flow.id}  ${flow.name}  [${flow.category}]${flow.enabled ? '' : '  (disabled)'}${review}`);
+      if (flow.description !== undefined) console.log(`      ${flow.description}`);
+      for (const step of flow.steps) console.log(`      ${step.id} ${stepLine(step)}   ${step.evidence.map((item) => item.ref).join(', ')}`);
+      for (const reason of set.reasons[flow.id] ?? []) console.log(`      - ${reason}`);
+    }
+    const verdicts = verdictsOf(project, repo);
+    const marked = set.flows.flatMap((flow) => verdicts.get(flow.id) ?? []);
+    const correct = marked.filter((verdict) => verdict === 'correct').length;
+    console.log(`  reviewed ${marked.length} of ${set.flows.length}: ${correct} correct, ${marked.length - correct} wrong${marked.length > 0 ? ` (precision ${((100 * correct) / marked.length).toFixed(0)}%)` : ''}`);
+  }
+}
+
+function review(project: Project, id: string | undefined, verdict: string | undefined): void {
+  if (id === undefined || (verdict !== 'correct' && verdict !== 'wrong')) throw new FlowsError('usage: flows review <flow-id> correct|wrong [--comment <text>]');
+  // Ids come from node ids, so two repos of the same role can share one ("Open /"); --repo picks the repo.
+  const repos = values.repo === undefined ? project.config.repos : [findRepo(project, values.repo, values.role)];
+  const owners = repos.filter((repo) => loadFlows(project, repo)?.flows.some((flow) => flow.id === id));
+  if (owners.length !== 1) {
+    throw new FlowsError(owners.length === 0 ? `no flow ${id} in the last scan; see "flows show flows"` : `${id} is in ${owners.map((repo) => repo.path).join(' and ')}; add --repo <path>`);
+  }
+  const dir = resolve(project.root, owners[0].path);
+  addRule(dir, { type: 'verdict', flow: id, verdict, ...(values.comment === undefined ? {} : { comment: values.comment }), added: today() });
+  console.log(`${id} marked ${verdict} in ${rulesFile(dir)}; run "flows scan" to apply it`);
 }
 
 function showMissed(project: Project): void {
@@ -154,6 +246,7 @@ function describe(graph: Graph, node: Graph['nodes'][number]): string {
 
 function show(project: Project, what: string): void {
   if (what === 'missed') return showMissed(project);
+  if (what === 'flows' || what === 'rejected' || what === 'unreachable') return showFlows(project, what);
   const kind = what.replace(/s$/, '');
   for (const repo of project.config.repos) {
     const graph = loadGraph(project, repo);
@@ -292,6 +385,8 @@ async function run(): Promise<void> {
     case 'show':
       if (!sub) throw new FlowsError('usage: flows show <kind> [--json], e.g. flows show routes');
       return show(loadProject(root), sub);
+    case 'review':
+      return review(loadProject(root), sub, rest[0]);
     case 'models list':
       return listModels(loadProject(root));
     case 'decide': {

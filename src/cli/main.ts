@@ -10,6 +10,7 @@ import { CATALOGUE } from '../embeddings/catalogue.ts';
 import { createEmbeddingProvider } from '../embeddings/create.ts';
 import { modelDir } from '../embeddings/download.ts';
 import { refreshFlows, verdictsOf, type EngineDeps } from '../engine/engine.ts';
+import { exportFlows } from '../engine/export.ts';
 import { OptionalLlm } from '../engine/llm.ts';
 import { loadFlows, type FlowSet } from '../engine/store.ts';
 import { stepLine } from '../engine/views.ts';
@@ -25,7 +26,7 @@ import { draftRule } from '../rules/draft.ts';
 import { addRule, loadRules, rulesFile, today } from '../rules/learned.ts';
 import { proposeRule } from '../rules/propose.ts';
 import { FlowsError } from '../shared/errors.ts';
-import { readCache } from '../shared/json-file.ts';
+import { readCache, writeJsonAtomic } from '../shared/json-file.ts';
 import type { TraceEvent } from '../trace/event.ts';
 import { JsonlTraceSink, readTrace, traceFile } from '../trace/sink.ts';
 
@@ -42,6 +43,8 @@ const USAGE = `usage: flows <command> [--project <dir>]
   review <flow-id> correct|wrong|never [--comment <text>] [--repo <path>]   a reviewer's verdict (never: don't
                                            suggest it again), kept in the repo's rules; the next scan applies it
                                            (--repo when two repos have that id)
+  export [--out <file>]                    the reviewed flows as JSON for a test tool: every enabled flow in an
+                                           enabled category, with the subflows they use
   rule missed <path:line> [--save]         propose a rule that finds what the scan missed there (kept with --save)
   rule exclude <node-id>                   leave a node out of every scan ("not a flow")
   rule draft --example <path:line>... [--save]   for code no adapter reads: the LLM drafts a rule, kept only if it
@@ -69,6 +72,7 @@ const { values, positionals } = parseArgs({
     samples: { type: 'string' },
     comment: { type: 'string' },
     repo: { type: 'string' },
+    out: { type: 'string' },
   },
 });
 
@@ -382,6 +386,18 @@ async function run(): Promise<void> {
       return show(loadProject(root), sub);
     case 'review':
       return review(loadProject(root), sub, rest[0]);
+    case 'export': {
+      const project = loadProject(root);
+      const sets = project.config.repos.map((repo) => loadFlows(project, repo));
+      if (sets.some((set) => set === undefined)) throw new FlowsError('some repos have no flows yet; run "flows scan"');
+      const exported = exportFlows(sets.flatMap((set) => set ?? []), categories(project.config));
+      if (values.out === undefined) console.log(JSON.stringify(exported, null, 2));
+      else {
+        writeJsonAtomic(resolve(values.out), exported, 2);
+        console.log(`${exported.flows.length} flows written to ${resolve(values.out)}`);
+      }
+      return;
+    }
     case 'models list':
       return listModels(loadProject(root));
     case 'decide': {

@@ -22,6 +22,7 @@ import { evaluate, loadKeys, type Score } from '../ingest/eval.ts';
 import { listFiles } from '../ingest/files.ts';
 import { isSource } from '../ingest/match.ts';
 import { CoverageSchema, scanRepo } from '../ingest/pipeline.ts';
+import { answerJob, loadJobs } from '../llm/assistant.ts';
 import { createGateway } from '../llm/create.ts';
 import { draftRule } from '../rules/draft.ts';
 import { addRule, loadRules, rulesFile, today } from '../rules/learned.ts';
@@ -49,6 +50,9 @@ const USAGE = `usage: flows <command> [--project <dir>]
                                            (--repo when two repos have that id)
   export [--out <file>]                    the reviewed flows as JSON for a test tool: every enabled flow in an
                                            enabled category, with the subflows they use
+  jobs [--json]                            with "llm": {"provider": "assistant"}: the AI jobs waiting for your
+                                           coding assistant (names, descriptions, unknown categories, rule drafts)
+  answer <job-id> '<json>'                 the assistant's answer to a job; the next scan checks it and uses it
   rule missed <path:line> [--save]         propose a rule that finds what the scan missed there (kept with --save)
   rule exclude <node-id>                   leave a node out of every scan ("not a flow")
   rule draft --example <path:line>... [--save]   for code no adapter reads: the LLM drafts a rule, kept only if it
@@ -133,12 +137,14 @@ function showStacks(project: Project, repos: readonly Repo[]): void {
   }
 }
 
+const jobsFile = (project: Project): string => join(projectDataDir(project), 'jobs.json');
+
 function engineDeps(project: Project, embedder: ReturnType<typeof createEmbeddingProvider>): EngineDeps {
   const trace = new JsonlTraceSink(traceFile(projectDataDir(project)));
   return {
     decider: createDecider(project, progress(), embedder),
     grounding: createGrounding(project, progress()),
-    llm: new OptionalLlm(createGateway(project.config.llm, trace), join(projectDataDir(project), 'llm-cache.json'), (reason) =>
+    llm: new OptionalLlm(createGateway(project.config.llm, trace, jobsFile(project)), join(projectDataDir(project), 'llm-cache.json'), (reason) =>
       console.log(`  the LLM is off for the rest of this scan, so names and unknown categories come from source: ${reason}`),
     ),
     trace,
@@ -177,6 +183,23 @@ async function scanAll(project: Project): Promise<void> {
     const set = await refreshFlows(project, repo, graph, engine);
     console.log(flowSummary(set));
     for (const note of set.notes) console.log(`    ${note}`);
+  }
+  if (engine.llm.pending > 0) console.log(`${engine.llm.pending} AI job(s) wait for your coding assistant: run "flows jobs", answer them, then scan again`);
+}
+
+function showJobs(project: Project): void {
+  const pending = Object.entries(loadJobs(jobsFile(project))).filter(([, job]) => job.answer === undefined);
+  if (values.json) {
+    console.log(JSON.stringify(pending.map(([id, job]) => ({ id, purpose: job.purpose, instructions: job.system, facts: job.prompt, answer_schema: job.schema, ...(job.error === undefined ? {} : { last_refusal: job.error }) })), null, 2));
+    return;
+  }
+  if (pending.length === 0) console.log('no AI jobs are waiting');
+  for (const [id, job] of pending) {
+    console.log(`${id}  ${job.purpose}  (asked ${job.asked})`);
+    console.log(`  instructions: ${job.system}`);
+    console.log(`  facts: ${job.prompt.replace(/\n/g, ' ')}`);
+    console.log(`  answer with JSON that meets: ${JSON.stringify(job.schema)}`);
+    if (job.error !== undefined) console.log(`  the last answer was refused: ${job.error}`);
   }
 }
 
@@ -317,7 +340,7 @@ async function rule(project: Project, action: string | undefined, args: string[]
       if (examples.some((example) => example.repo !== repo)) throw new FlowsError('all examples must be in the same repo');
       const dir = resolve(project.root, repo.path);
       const sources = new Map(listFiles(dir).filter(isSource).map((path) => [path, readFileSync(join(dir, path), 'utf8')]));
-      const gateway = createGateway(project.config.llm, new JsonlTraceSink(traceFile(projectDataDir(project))));
+      const gateway = createGateway(project.config.llm, new JsonlTraceSink(traceFile(projectDataDir(project))), jobsFile(project));
       const result = await draftRule(gateway, repo.role === 'api' ? 'route' : 'page', examples.map(({ file, line }) => `${file}:${line}`), sources);
       if (!result.accepted) throw new FlowsError(`the drafted rule was rejected: ${result.reason}`);
       console.log(`drafted rule (reproduces all ${examples.length} example(s)): ${JSON.stringify(result.rule)}`);
@@ -407,6 +430,15 @@ async function run(): Promise<void> {
         writeJsonAtomic(resolve(values.out), exported, 2);
         console.log(`${exported.flows.length} flows written to ${resolve(values.out)}`);
       }
+      return;
+    }
+    case 'jobs':
+      return showJobs(loadProject(root));
+    case 'answer': {
+      const [answer] = rest;
+      if (!sub || answer === undefined) throw new FlowsError("usage: flows answer <job-id> '<json>'");
+      answerJob(jobsFile(loadProject(root)), sub, answer);
+      console.log(`kept the answer to ${sub}; run "flows scan" to check it and use it`);
       return;
     }
     case 'ui': {

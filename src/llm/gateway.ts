@@ -10,6 +10,8 @@ export interface LlmGateway {
   readonly model: string;
   // The answer must be JSON that validates against `schema`; anything else is an OutputValidationError.
   completeJson<T>(request: LlmRequest<T>): Promise<T>;
+  // A schema-valid answer that a later check refused; a gateway that can be asked again (the assistant) reopens it.
+  refuse?(request: LlmRequest<unknown>, why: string): void;
 }
 
 export type RawReply = { text: string; tokens: { input: number; output: number } | null };

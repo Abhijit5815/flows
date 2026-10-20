@@ -16,13 +16,15 @@ const SYSTEM =
 // when the grounding Decider says those steps support it, so the LLM never adds a fact.
 export async function proposeName(flow: Flow, llm: OptionalLlm, grounding: Decider): Promise<{ name?: string; description?: string; reasons: string[] }> {
   const facts = flow.steps.map((step) => `${step.claim}.`).join(' ');
-  const reply = await llm.ask({ purpose: 'flow-name', system: SYSTEM, prompt: facts, schema: NameSchema });
+  const request = { purpose: 'flow-name', system: SYSTEM, prompt: facts, schema: NameSchema };
+  const reply = await llm.ask(request);
   if (reply === undefined) return { reasons: [] };
   const kept: { name?: string; description?: string; reasons: string[] } = { reasons: [] };
   for (const field of ['name', 'description'] as const) {
     const decision = await grounding.decide(GROUNDING, groundingInput(facts, reply[field]), GROUNDING_LABELS);
     if (decision.label === 'supported') kept[field] = reply[field];
-    else kept.reasons.push(`the LLM's ${field} "${reply[field]}" is not supported by the steps (p=${(decision.all_probs.supported ?? 0).toFixed(2)}); not used`);
+    else kept.reasons.push(`the proposed ${field} "${reply[field]}" is not supported by the steps (p=${(decision.all_probs.supported ?? 0).toFixed(2)}); not used`);
   }
+  if (kept.reasons.length > 0) llm.refuse(request, kept.reasons.join('; '));
   return kept;
 }

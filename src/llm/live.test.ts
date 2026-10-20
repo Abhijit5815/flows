@@ -16,7 +16,7 @@ const request = {
   schema: z.object({ name: z.string().min(1).max(80), description: z.string().min(1).max(300) }),
 };
 
-const configs: LlmConfig[] = [
+const configs: Extract<LlmConfig, { model: string }>[] = [
   { provider: 'anthropic', model: 'claude-opus-5-5', effort: 'low' },
   { provider: 'openai-compatible', base_url: 'http://localhost:11434/v1', model: 'llama3.2:3b', timeout_ms: 120_000 },
 ];

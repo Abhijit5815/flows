@@ -24,6 +24,9 @@ const AnthropicSchema = z.object({
   effort: z.enum(['low', 'medium', 'high', 'xhigh', 'max']).default('low'),
 });
 
+// Inside a coding assistant: Flows saves its AI jobs for the assistant (`flows jobs`, `flows answer`), calls nothing.
+const AssistantSchema = z.object({ provider: z.literal('assistant') });
+
 const LocalEmbedderSchema = z.object({
   provider: z.literal('local'),
   model: z.string().min(1).default('bge-small-en-v1.5'),
@@ -48,7 +51,7 @@ export const ProjectConfigSchema = z.object({
   }),
   // Default: a free local model, so nothing leaves the machine and no API key or billing is needed.
   llm: z
-    .discriminatedUnion('provider', [AnthropicSchema, OpenAiCompatibleSchema])
+    .discriminatedUnion('provider', [AnthropicSchema, OpenAiCompatibleSchema, AssistantSchema])
     .prefault({ provider: 'openai-compatible', base_url: 'http://localhost:11434/v1', model: 'llama3.2:3b' }),
   embedder: z.discriminatedUnion('provider', [LocalEmbedderSchema, OpenAiCompatibleSchema]).prefault({ provider: 'local' }),
   decider: z.object({ thresholds: z.record(z.string(), ThresholdSchema).prefault({}) }).prefault({}),

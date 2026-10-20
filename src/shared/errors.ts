@@ -24,3 +24,6 @@ export class OutputValidationError extends FlowsError {}
 export class ChecksumError extends FlowsError {}
 
 export class DeciderError extends FlowsError {}
+
+// An LLM request that waits for the coding assistant to answer it (`flows jobs`, `flows answer`).
+export class PendingAnswer extends FlowsError {}

@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { LlmGateway, LlmRequest } from '../llm/gateway.ts';
-import { ConfigError, OutputValidationError, ProviderError } from '../shared/errors.ts';
+import { ConfigError, OutputValidationError, PendingAnswer, ProviderError } from '../shared/errors.ts';
 import { sha256 } from '../shared/hash.ts';
 import { readCache, writeJsonAtomic } from '../shared/json-file.ts';
 
@@ -14,11 +14,23 @@ export class OptionalLlm {
   readonly #onOff: (reason: string) => void;
   #cache: Record<string, unknown> | undefined;
   #off = false;
+  pending = 0; // requests waiting for the coding assistant (the assistant provider)
 
   constructor(gateway: LlmGateway | undefined, cacheFile: string, onOff: (reason: string) => void) {
     this.#gateway = gateway;
     this.#cacheFile = cacheFile;
     this.#onOff = onOff;
+  }
+
+  // A reply a later check refused (a name the steps don't support): the assistant gets the job back with the reason,
+  // so it can try again; a model's reply stays cached, so the same request isn't paid for again on every scan.
+  refuse(request: LlmRequest<unknown>, why: string): void {
+    if (this.#gateway?.refuse === undefined) return;
+    this.#gateway.refuse(request, why);
+    if (this.#cache !== undefined) {
+      delete this.#cache[sha256(JSON.stringify([this.#gateway.model, request.purpose, request.system, request.prompt]))];
+      writeJsonAtomic(this.#cacheFile, this.#cache);
+    }
   }
 
   async ask<T>(request: LlmRequest<T>): Promise<T | undefined> {
@@ -35,6 +47,10 @@ export class OptionalLlm {
       return reply;
     } catch (error) {
       if (error instanceof OutputValidationError) return undefined;
+      if (error instanceof PendingAnswer) {
+        this.pending++;
+        return undefined;
+      }
       if (error instanceof ProviderError || error instanceof ConfigError) {
         this.#off = true;
         this.#onOff(error.message);

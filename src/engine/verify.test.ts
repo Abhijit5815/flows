@@ -57,7 +57,7 @@ function kitFor(flows: readonly Flow[]): Kit {
     if (found === undefined) throw new Error(`no genuine flow named "${name}"`);
     return found;
   };
-  return { flow, copy: (name) => ({ ...structuredClone(flow(name)), id: `fake-${++n}` }) };
+  return { flow, copy: (name) => ({ ...structuredClone(flow(name)), id: `fake-${++n}` }), context: [] };
 }
 
 // What the verifier, reachability and the judge make of these flows, by flow id (or "rejected" when nothing survived).
@@ -86,8 +86,9 @@ for (const [app, role] of [['express-basic', 'api'], ['next-basic', 'web']] as c
 async function plant(fakes: readonly Fake[], found: Fixture, grounding: Decider, report: (line: string) => void): Promise<number> {
   let passed = 0;
   for (const fake of fakes) {
-    const planted = fake.make(kitFor(found.genuine));
-    const results = (await outcomes([...found.genuine, ...planted], found, grounding)).slice(found.genuine.length);
+    const kit = kitFor(found.genuine);
+    const planted = fake.make(kit);
+    const results = (await outcomes([...found.genuine, ...kit.context, ...planted], found, grounding)).slice(found.genuine.length + kit.context.length);
     for (const result of results) {
       if (result.status === 'verified') passed++;
       report(`${result.status === 'verified' ? 'PASSED' : result.status.padEnd(11)}  ${fake.name}: ${result.reasons[0] ?? ''}`);
@@ -126,9 +127,11 @@ test('the reasons name what was wrong: the subflow cycle and the nesting cap', a
   const reasons = async (name: string) => {
     const fake = API_FAKES.find((candidate) => candidate.name === name);
     assert.ok(fake);
-    return (await outcomes([...found.genuine, ...fake.make(kitFor(found.genuine))], found, refusing())).slice(found.genuine.length).flatMap((result) => result.reasons);
+    const kit = kitFor(found.genuine);
+    const planted = fake.make(kit);
+    return (await outcomes([...found.genuine, ...kit.context, ...planted], found, refusing())).slice(found.genuine.length + kit.context.length).flatMap((result) => result.reasons);
   };
-  assert.ok((await reasons('two login flows that need each other (a cycle)')).some((reason) => reason.includes('a cycle')));
-  assert.ok((await reasons('login flows nested five deep')).some((reason) => reason.includes('nest 4 deep; the cap is 3')));
+  assert.ok((await reasons('two flows that run each other (a cycle)')).some((reason) => reason.includes('a cycle')));
+  assert.ok((await reasons('subflows nested four deep')).some((reason) => reason.includes('nest 4 deep; the cap is 3')));
   assert.ok((await reasons('a subflow that does not log in')).some((reason) => reason.includes('is not a login flow')));
 });

@@ -12,7 +12,7 @@ import type { LlmGateway, LlmRequest } from '../llm/gateway.ts';
 import { ProviderError } from '../shared/errors.ts';
 import { tempProject } from '../shared/testing/project.ts';
 import { MemoryTraceSink } from '../trace/sink.ts';
-import { buildFlows, type EngineDeps } from './engine.ts';
+import { buildFlows, type EngineDeps, type HumanInput } from './engine.ts';
 import type { Verdict } from './judge.ts';
 import { OptionalLlm } from './llm.ts';
 import { FlowSetSchema } from './store.ts';
@@ -30,6 +30,8 @@ async function nextBasic(): Promise<Graph> {
   }
   return graph;
 }
+
+const none: HumanInput = { verdicts: new Map(), edits: { schema_version: 0, overrides: {}, added: [] } };
 
 const answer = (label: string) => ({ label, prob: 1, all_probs: { [label]: 1 }, version: 'stub' });
 
@@ -80,7 +82,7 @@ function deps(gateway: LlmGateway, offs: string[] = [], cache = join(tmp, `llm-$
 
 test('flows are judged, named only where the steps support the name, and every step is traced', async () => {
   const run = deps(fakeLlm());
-  const set = FlowSetSchema.parse(await buildFlows(await nextBasic(), new Map(), run));
+  const set = FlowSetSchema.parse(await buildFlows(await nextBasic(), none, run));
   const login = set.flows.find((flow) => flow.id === 'ui-082b51bb');
   assert.deepEqual([login?.name, login?.description, login?.category], [SUPPORTED[0], SUPPORTED[1], 'auth']);
   const products = set.flows.find((flow) => flow.id === 'ui-e45ebcf5');
@@ -98,16 +100,16 @@ test('flows are judged, named only where the steps support the name, and every s
 test('a second scan asks the LLM nothing: replies are kept by prompt', async () => {
   const cache = join(tmp, 'llm-kept.json');
   const first = fakeLlm();
-  await buildFlows(await nextBasic(), new Map(), deps(first, [], cache));
+  await buildFlows(await nextBasic(), none, deps(first, [], cache));
   assert.ok(first.calls.length > 0);
   const second = fakeLlm();
-  await buildFlows(await nextBasic(), new Map(), deps(second, [], cache));
+  await buildFlows(await nextBasic(), none, deps(second, [], cache));
   assert.deepEqual(second.calls, []);
 });
 
 test("a reviewer's wrong verdict rejects the flow, and flows that needed it as their Log-in step lose that step", async () => {
   const verdicts = new Map<string, Verdict>([['ui-082b51bb', 'wrong'], ['ui-e68b64da', 'correct']]);
-  const set = await buildFlows(await nextBasic(), verdicts, deps(fakeLlm()));
+  const set = await buildFlows(await nextBasic(), { ...none, verdicts }, deps(fakeLlm()));
   const status = (id: string) => set.flows.find((flow) => flow.id === id);
   assert.equal(status('ui-082b51bb')?.status, 'rejected');
   assert.deepEqual([status('ui-3cb127a8')?.status, status('ui-3cb127a8')?.steps.some((step) => step.kind === 'subflow')], ['unverified', false]);
@@ -117,7 +119,7 @@ test("a reviewer's wrong verdict rejects the flow, and flows that needed it as t
 test('with the LLM down, the run goes on from source alone and says so once', async () => {
   const offs: string[] = [];
   const gateway = fakeLlm(true);
-  const set = await buildFlows(await nextBasic(), new Map(), deps(gateway, offs));
+  const set = await buildFlows(await nextBasic(), none, deps(gateway, offs));
   assert.equal(offs.length, 1);
   assert.equal(gateway.calls.length, 1, 'no call after the first failure');
   assert.equal(set.flows.find((flow) => flow.id === 'ui-082b51bb')?.name, 'Submit LoginForm#form on /login (POST /api/auth/login)');

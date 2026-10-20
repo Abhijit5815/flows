@@ -1,21 +1,24 @@
-import type { ProjectConfig } from '../config/project.ts';
+import { resolve } from 'node:path';
+import type { Project, ProjectConfig, Repo } from '../config/project.ts';
 import type { Decider } from '../decider/decider.ts';
 import { lookup } from '../graph/lookup.ts';
 import type { Graph } from '../graph/schema.ts';
-import type { Category } from '../model/category.ts';
+import { FALLBACK_CATEGORY_ID, type Category } from '../model/category.ts';
 import { FlowSchema, type Flow } from '../model/flow.ts';
+import { loadRules, type LearnedRule } from '../rules/learned.ts';
 import { eventBase, type TraceEvent } from '../trace/event.ts';
 import type { TraceSink } from '../trace/sink.ts';
 import { candidates } from './candidates.ts';
 import { classify } from './classify.ts';
 import { deciderText } from './describe.ts';
+import { loadEdits, type Edits } from './edits.ts';
 import { judge, type Verdict } from './judge.ts';
 import type { OptionalLlm } from './llm.ts';
 import { proposeName } from './name.ts';
 import { reachability, unreachableBecause } from './reach.ts';
-import type { FlowSet } from './store.ts';
+import { saveFlows, type FlowSet } from './store.ts';
 import { addLoginSubflows } from './subflows.ts';
-import { verifyFlows, type Verified } from './verify.ts';
+import { verifyFlows, type Human, type Verified } from './verify.ts';
 
 export type EngineDeps = {
   decider: Decider; // destructive-risk and flow-category
@@ -27,29 +30,49 @@ export type EngineDeps = {
   config: ProjectConfig['engine'];
 };
 
+// What people taught Flows about the repo: their latest verdict on each flow, and their edits and added flows.
+export type HumanInput = { verdicts: ReadonlyMap<string, Verdict>; edits: Edits };
+
+export const verdictsOf = (rules: readonly LearnedRule[]): Map<string, Verdict> =>
+  new Map(rules.flatMap((rule) => (rule.type === 'feedback' && (rule.kind === 'correct' || rule.kind === 'wrong' || rule.kind === 'never') ? [[rule.flow, rule.kind] as const] : [])));
+
 // PLAN.md Phase 4 flow engine, for one repo's graph: candidates, Login subflows, verifier, reachability, classify,
-// names, judge. Every skipped candidate, verification and judgement goes to the trace as a verdict event.
-export async function buildFlows(graph: Graph, verdicts: ReadonlyMap<string, Verdict>, deps: EngineDeps): Promise<FlowSet> {
+// names, judge. Phase 5: a person's edits and added flows are laid over the result, and what a person set is never
+// overwritten. Every skipped candidate, verification and judgement goes to the trace as a verdict event.
+export async function buildFlows(graph: Graph, human: HumanInput, deps: EngineDeps): Promise<FlowSet> {
   const nodes = lookup(graph);
   const record = (started: number, stage: Extract<TraceEvent, { kind: 'verdict' }>['stage'], subject: string, outcome: string, reasons: string[]) =>
     deps.trace.record({ ...eventBase(started), kind: 'verdict', stage, subject, outcome, reasons });
+  const { overrides, added } = human.edits;
 
   const found = candidates(graph);
-  const { flows, notes } = addLoginSubflows(found.flows, nodes);
-  // A flow a reviewer marked wrong is rejected as it stands, and nothing can use it as a subflow.
-  const wrong = flows.filter((flow) => verdicts.get(flow.id) === 'wrong');
+  const generated = addLoginSubflows(found.flows, nodes);
+  // A person's steps replace the generated ones, and steps they switched off stay off.
+  const withSteps = (flow: Flow): Flow => {
+    const override = overrides[flow.id];
+    if (override === undefined) return flow;
+    const steps = (override.steps ?? flow.steps).map((step) => (override.disabled_steps?.includes(step.id) ? { ...step, enabled: false } : step));
+    return { ...flow, steps };
+  };
+  const addedIds = new Set(added.map((flow) => flow.id));
+  const flows = [...generated.flows.filter((flow) => !addedIds.has(flow.id)), ...added].map(withSteps);
+  const people = new Map<string, Human>(flows.flatMap((flow) => (addedIds.has(flow.id) || overrides[flow.id]?.steps !== undefined ? [[flow.id, { steps: true, text: addedIds.has(flow.id) }] as const] : [])));
+
+  // A flow a reviewer marked wrong (or never) is rejected as it stands, and nothing can use it as a subflow.
+  const refused = flows.filter((flow) => human.verdicts.get(flow.id) === 'wrong' || human.verdicts.get(flow.id) === 'never');
   const results = await verifyFlows(
-    flows.filter((flow) => !wrong.includes(flow)),
-    { graph, nodes, grounding: deps.grounding, maxDepth: deps.config.max_subflow_depth },
+    flows.filter((flow) => !refused.includes(flow)),
+    { graph, nodes, grounding: deps.grounding, maxDepth: deps.config.max_subflow_depth, human: people },
   );
   const reach = reachability(graph, nodes);
-  const set: FlowSet = { flows: [], reasons: {}, rejected: [], unreachable: reach.unreachable, notes };
+  const set: FlowSet = { flows: [], reasons: {}, rejected: [], decisions: {}, unreachable: reach.unreachable, notes: generated.notes };
   for (const skip of found.skipped) {
-    set.rejected.push({ subject: skip.node, name: skip.name, reasons: [skip.reason] });
+    if (skip.flow !== undefined && addedIds.has(skip.flow.id)) continue; // a person promoted it
+    set.rejected.push({ subject: skip.node, name: skip.name, reasons: [skip.reason], ...(skip.flow === undefined ? {} : { flow: skip.flow }) });
     record(performance.now(), 'candidates', skip.node, 'skipped', [skip.reason]);
   }
 
-  const judged: Verified[] = wrong.map((flow) => ({ ok: true, flow, claims: 1, proven: 1, reasons: [] }));
+  const judged: Verified[] = refused.map((flow) => ({ ok: true, flow, claims: 1, proven: 1, reasons: [], keep: true }));
   for (const result of results) {
     if (result.ok) judged.push(result);
     else {
@@ -57,33 +80,45 @@ export async function buildFlows(graph: Graph, verdicts: ReadonlyMap<string, Ver
       record(performance.now(), 'verifier', result.id, 'rejected', result.reasons);
     }
   }
+  const byId = new Map(judged.map((result) => [result.flow.id, result.flow]));
   for (const result of judged) {
     const started = performance.now();
-    const verdict = verdicts.get(result.flow.id);
-    if (verdict !== 'wrong') record(started, 'verifier', result.flow.id, result.reasons.length === 0 ? 'kept' : 'kept with changes', result.reasons);
-    const named = verdict === 'wrong' ? { reasons: [] } : await proposeName(result.flow, deps.llm, deps.grounding);
-    const { category, destructive } = await classify(deciderText(result.flow, nodes), deps);
-    const judgement = judge({
-      claims: result.claims,
-      proven: result.proven,
-      unreachable: unreachableBecause(result.flow, reach),
-      destructive,
-      verdict,
-      sourceOnlyWeight: deps.config.source_only_weight,
-    });
+    const { id } = result.flow;
+    const verdict = human.verdicts.get(id);
+    const override = overrides[id] ?? {};
+    const own = addedIds.has(id);
+    if (!refused.includes(result.flow)) record(started, 'verifier', id, result.reasons.length === 0 ? 'kept' : 'kept with changes', result.reasons);
+    // The LLM names only what nobody named: not a person's own flow, nor a flow a person renamed or refused.
+    const named = own || override.name !== undefined || refused.includes(result.flow) ? { reasons: [] } : await proposeName(result.flow, deps.llm, deps.grounding);
+    const classified = await classify(deciderText(result.flow, nodes), deps);
+    const judgement = judge({ claims: result.claims, proven: result.proven, unreachable: unreachableBecause(result.flow, reach, byId, people.get(id)?.steps ?? false), destructive: classified.destructive, verdict, sourceOnlyWeight: deps.config.source_only_weight });
+    const description = override.description ?? named.description ?? result.flow.description;
     const flow: Flow = FlowSchema.parse({
       ...result.flow,
-      ...(named.name === undefined ? {} : { name: named.name }),
-      ...(named.description === undefined ? {} : { description: named.description }),
-      category,
-      destructive,
+      name: override.name ?? named.name ?? result.flow.name,
+      ...(description === undefined ? {} : { description }),
+      category: override.category ?? (own && result.flow.category !== FALLBACK_CATEGORY_ID ? result.flow.category : classified.category),
+      destructive: classified.destructive,
       status: judgement.status,
       confidence: judgement.confidence,
-      enabled: judgement.enabled,
+      enabled: override.enabled ?? judgement.enabled,
+      priority: override.priority ?? result.flow.priority,
+      tags: override.tags ?? result.flow.tags,
+      version: overrides[id]?.version ?? result.flow.version,
     });
     set.flows.push(flow);
-    set.reasons[flow.id] = [...(found.notes[flow.id] ?? []), ...result.reasons, ...named.reasons, ...judgement.reasons];
-    record(started, 'judge', flow.id, judgement.status, judgement.reasons);
+    set.reasons[id] = [...(found.notes[id] ?? []), ...result.reasons, ...named.reasons, ...judgement.reasons, ...(overrides[id] === undefined ? [] : [`edited by a person (version ${flow.version})`])];
+    set.decisions[id] = classified.decisions;
+    record(started, 'judge', id, judgement.status, judgement.reasons);
   }
+  return set;
+}
+
+// A repo's flows from its graph and what people taught Flows about it (<repo>/.flows/), saved for `flows show` and
+// the review page.
+export async function refreshFlows(project: Project, repo: Repo, graph: Graph, deps: EngineDeps): Promise<FlowSet> {
+  const dir = resolve(project.root, repo.path);
+  const set = await buildFlows(graph, { verdicts: verdictsOf(loadRules(dir)), edits: loadEdits(dir) }, deps);
+  saveFlows(project, repo, set);
   return set;
 }

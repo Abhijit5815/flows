@@ -11,6 +11,8 @@ import { parseOrThrow } from '../shared/validate.ts';
 const Added = z.iso.date();
 const Place = z.string().regex(/^.+:[1-9]\d*$/, 'a place looks like "src/server.ts:17"');
 
+export const FEEDBACK_KINDS = ['correct', 'wrong', 'never', 'missing-step', 'comment'] as const;
+
 export const LearnedRuleSchema = z.discriminatedUnion('type', [
   // "You missed this": one more pattern for one of an adapter's own rules (scope: the adapter id).
   z.object({ type: z.literal('pattern'), scope: z.string().min(1), rule: PatternRuleSchema, example: Place, added: Added }),
@@ -18,8 +20,17 @@ export const LearnedRuleSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('guard'), scope: z.string().min(1), name: z.string().min(1), example: Place, added: Added }),
   // "Not a flow": a graph node left out of every scan.
   z.object({ type: z.literal('exclude'), node: z.string().min(1), added: Added }),
-  // A reviewer's verdict on a generated flow, by its id; the judge applies it on the next scan.
-  z.object({ type: z.literal('verdict'), flow: z.string().min(1), verdict: z.enum(['correct', 'wrong']), comment: z.string().min(1).optional(), added: Added }),
+  // PLAN.md §4 Feedback on a flow (or one of its steps), from the review page or `flows review`. The judge applies
+  // the latest correct, wrong or never ("never suggest again") at the next scan; the page shows the rest.
+  z.object({
+    type: z.literal('feedback'),
+    flow: z.string().min(1),
+    step: z.string().min(1).optional(),
+    kind: z.enum(FEEDBACK_KINDS),
+    comment: z.string().min(1).optional(),
+    place: Place.optional(), // where a missing step is, when the reviewer knows
+    added: Added,
+  }),
   // Drafted from marked examples for code no adapter reads: every match becomes a route (api) or a page (web),
   // read from the pattern's metavariables.
   z.object({
@@ -35,6 +46,7 @@ export const LearnedRuleSchema = z.discriminatedUnion('type', [
 
 export type LearnedRule = z.infer<typeof LearnedRuleSchema>;
 export type GenericRule = Extract<LearnedRule, { type: 'generic' }>;
+export type Feedback = Extract<LearnedRule, { type: 'feedback' }>;
 
 const RulesFileSchema = z.object({ schema_version: z.literal(0), rules: z.array(LearnedRuleSchema) });
 

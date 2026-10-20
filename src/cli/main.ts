@@ -9,10 +9,9 @@ import { loadBuiltInTasks } from '../decider/task.ts';
 import { CATALOGUE } from '../embeddings/catalogue.ts';
 import { createEmbeddingProvider } from '../embeddings/create.ts';
 import { modelDir } from '../embeddings/download.ts';
-import { buildFlows, type EngineDeps } from '../engine/engine.ts';
-import type { Verdict } from '../engine/judge.ts';
+import { refreshFlows, verdictsOf, type EngineDeps } from '../engine/engine.ts';
 import { OptionalLlm } from '../engine/llm.ts';
-import { loadFlows, saveFlows, type FlowSet } from '../engine/store.ts';
+import { loadFlows, type FlowSet } from '../engine/store.ts';
 import { stepLine } from '../engine/views.ts';
 import type { Graph } from '../graph/schema.ts';
 import { loadGraph, repoFile } from '../graph/store.ts';
@@ -40,8 +39,9 @@ const USAGE = `usage: flows <command> [--project <dir>]
                                            then its flows
   show <kind> [--json]                     what the last scan found: routes, pages, handlers, guards, ... missed,
                                            or flows, rejected (with reasons) and unreachable (code no entry reaches)
-  review <flow-id> correct|wrong [--comment <text>] [--repo <path>]   a reviewer's verdict, kept in the repo's
-                                           rules; the next scan applies it (--repo when two repos have that id)
+  review <flow-id> correct|wrong|never [--comment <text>] [--repo <path>]   a reviewer's verdict (never: don't
+                                           suggest it again), kept in the repo's rules; the next scan applies it
+                                           (--repo when two repos have that id)
   rule missed <path:line> [--save]         propose a rule that finds what the scan missed there (kept with --save)
   rule exclude <node-id>                   leave a node out of every scan ("not a flow")
   rule draft --example <path:line>... [--save]   for code no adapter reads: the LLM drafts a rule, kept only if it
@@ -124,10 +124,6 @@ function showStacks(project: Project, repos: readonly Repo[]): void {
   }
 }
 
-// The verdicts a repo's rules hold, by flow id; the latest one counts.
-const verdictsOf = (project: Project, repo: Repo): Map<string, Verdict> =>
-  new Map(loadRules(resolve(project.root, repo.path)).flatMap((rule) => (rule.type === 'verdict' ? [[rule.flow, rule.verdict] as const] : [])));
-
 function engineDeps(project: Project, embedder: ReturnType<typeof createEmbeddingProvider>): EngineDeps {
   const trace = new JsonlTraceSink(traceFile(projectDataDir(project)));
   return {
@@ -169,8 +165,7 @@ async function scanAll(project: Project): Promise<void> {
     if (coverage.unrecognised.length > 0) console.log(`  unrecognised (${coverage.unrecognised.length}):`);
     for (const note of coverage.unrecognised) console.log(`    ${note.file}:${note.line}  ${note.reason}`);
     if (coverage.missed.length > 0) console.log(`  possibly missed: ${coverage.missed.length}; see "flows show missed" (listed for review, never added to the graph)`);
-    const set = await buildFlows(graph, verdictsOf(project, repo), engine);
-    saveFlows(project, repo, set);
+    const set = await refreshFlows(project, repo, graph, engine);
     console.log(flowSummary(set));
     for (const note of set.notes) console.log(`    ${note}`);
   }
@@ -207,7 +202,7 @@ function showFlows(project: Project, what: 'flows' | 'rejected' | 'unreachable')
       for (const step of flow.steps) console.log(`      ${step.id} ${stepLine(step)}   ${step.evidence.map((item) => item.ref).join(', ')}`);
       for (const reason of set.reasons[flow.id] ?? []) console.log(`      - ${reason}`);
     }
-    const verdicts = verdictsOf(project, repo);
+    const verdicts = verdictsOf(loadRules(resolve(project.root, repo.path)));
     const marked = set.flows.flatMap((flow) => verdicts.get(flow.id) ?? []);
     const correct = marked.filter((verdict) => verdict === 'correct').length;
     console.log(`  reviewed ${marked.length} of ${set.flows.length}: ${correct} correct, ${marked.length - correct} wrong${marked.length > 0 ? ` (precision ${((100 * correct) / marked.length).toFixed(0)}%)` : ''}`);
@@ -215,7 +210,7 @@ function showFlows(project: Project, what: 'flows' | 'rejected' | 'unreachable')
 }
 
 function review(project: Project, id: string | undefined, verdict: string | undefined): void {
-  if (id === undefined || (verdict !== 'correct' && verdict !== 'wrong')) throw new FlowsError('usage: flows review <flow-id> correct|wrong [--comment <text>]');
+  if (id === undefined || (verdict !== 'correct' && verdict !== 'wrong' && verdict !== 'never')) throw new FlowsError('usage: flows review <flow-id> correct|wrong|never [--comment <text>]');
   // Ids come from node ids, so two repos of the same role can share one ("Open /"); --repo picks the repo.
   const repos = values.repo === undefined ? project.config.repos : [findRepo(project, values.repo, values.role)];
   const owners = repos.filter((repo) => loadFlows(project, repo)?.flows.some((flow) => flow.id === id));
@@ -223,7 +218,7 @@ function review(project: Project, id: string | undefined, verdict: string | unde
     throw new FlowsError(owners.length === 0 ? `no flow ${id} in the last scan; see "flows show flows"` : `${id} is in ${owners.map((repo) => repo.path).join(' and ')}; add --repo <path>`);
   }
   const dir = resolve(project.root, owners[0].path);
-  addRule(dir, { type: 'verdict', flow: id, verdict, ...(values.comment === undefined ? {} : { comment: values.comment }), added: today() });
+  addRule(dir, { type: 'feedback', flow: id, kind: verdict, ...(values.comment === undefined ? {} : { comment: values.comment }), added: today() });
   console.log(`${id} marked ${verdict} in ${rulesFile(dir)}; run "flows scan" to apply it`);
 }
 

@@ -4,17 +4,23 @@ import { GROUNDING, GROUNDING_LABELS, groundingInput } from '../decider/entailme
 import type { Lookup } from '../graph/lookup.ts';
 import type { Graph, GraphNode } from '../graph/schema.ts';
 import { FlowSchema, type Flow } from '../model/flow.ts';
-import { claimOf, flowName, label, premiseOf } from './describe.ts';
+import { claimOf, flowName, isRunClaim, label, LOGIN_CLAIM, premiseOf } from './describe.ts';
 import { isLogin } from './subflows.ts';
 
 type Step = Flow['steps'][number];
 type Evidence = Step['evidence'];
 
-// claims: every step, check, name and description the flow states; proven: those the graph backs.
-export type Verified = { ok: true; flow: Flow; claims: number; proven: number; reasons: string[] };
+// claims: every step, check, name and description the flow states; proven: those the graph backs. keep: a person
+// wrote these steps, so problems are reported and nothing is dropped (PLAN.md Phase 5: human edits are never
+// overwritten).
+export type Verified = { ok: true; flow: Flow; claims: number; proven: number; reasons: string[]; keep: boolean };
 export type Verification = Verified | { ok: false; id: string; name: string; reasons: string[] };
 
-export type VerifyContext = { graph: Graph; nodes: Lookup; grounding: Decider; maxDepth: number };
+// Per flow id: steps = a person wrote the steps; text = a person wrote the name and description (their own words,
+// not claims the graph has to back).
+export type Human = { steps: boolean; text: boolean };
+
+export type VerifyContext = { graph: Graph; nodes: Lookup; grounding: Decider; maxDepth: number; human?: ReadonlyMap<string, Human> };
 
 const UI_KINDS = new Set(['page', 'layout', 'component', 'form', 'action']);
 
@@ -86,6 +92,8 @@ async function stepProblem(step: Step, flow: Flow, ctx: VerifyContext): Promise<
       return { problem: `${step.request.method} ${step.request.path} is not what ${target.id} sends`, nodes };
     }
   }
+  // A subflow step a person made names the flow it runs; checkSubflows checks that flow.
+  if (step.kind === 'subflow' && isRunClaim(step.claim)) return { nodes };
   if (step.claim !== claimOf(step.kind, nodes)) {
     const grounded = await supported(premiseOf(step.kind, nodes), step.claim, ctx);
     if (!grounded.ok) return { problem: `"${step.claim}" is not supported by its evidence (p=${grounded.p.toFixed(2)})`, nodes };
@@ -101,6 +109,8 @@ async function verifyOne(input: unknown, ctx: VerifyContext): Promise<Verificati
   const flow = parsed.data;
   if ((flow.kind === 'ui') !== (ctx.graph.role === 'web')) return { ok: false, id, name, reasons: [`a ${flow.kind} flow is checked against the ${flow.kind === 'ui' ? 'web' : 'api'} graph, not the ${ctx.graph.role} graph`] };
 
+  const human = ctx.human?.get(flow.id);
+  const keep = human?.steps ?? false;
   const reasons: string[] = [];
   let claims = 0;
   let proven = 0;
@@ -109,16 +119,20 @@ async function verifyOne(input: unknown, ctx: VerifyContext): Promise<Verificati
     claims += step.check === null ? 1 : 2;
     const { problem, nodes } = await stepProblem(step, flow, ctx);
     if (problem !== undefined) {
-      reasons.push(`${step.id} dropped: ${problem}`);
+      reasons.push(keep ? `${step.id} is not backed by source: ${problem}` : `${step.id} dropped: ${problem}`);
+      if (keep) steps.push(step);
       continue;
     }
     proven += 1;
     const checkIssue = checkProblem(step, nodes, flow, ctx);
-    if (checkIssue !== undefined) reasons.push(`${step.id} check dropped: ${checkIssue}`);
+    if (checkIssue !== undefined) reasons.push(keep ? `${step.id} check is not backed by source: ${checkIssue}` : `${step.id} check dropped: ${checkIssue}`);
     else if (step.check !== null) proven += 1;
-    steps.push({ ...step, check: checkIssue === undefined ? step.check : null });
+    steps.push({ ...step, check: checkIssue === undefined || keep ? step.check : null });
   }
-  if (!steps.some((step) => step.kind !== 'subflow')) return { ok: false, id, name, reasons: [...reasons, 'no step survived'] };
+  // A person may build a flow from subflows alone; anything else needs a step of its own left.
+  if (!keep && !steps.some((step) => step.kind !== 'subflow')) return { ok: false, id, name, reasons: [...reasons, 'no step survived'] };
+  // Once a person wrote the steps, the name and description are part of their flow, not claims to prove.
+  if (human?.text || keep) return { ok: true, flow: { ...flow, steps }, claims, proven, reasons, keep };
 
   // The name and description are claims too; the proven steps are their premise.
   const premise = steps.map((step) => `${step.claim}.`).join(' ');
@@ -139,34 +153,81 @@ async function verifyOne(input: unknown, ctx: VerifyContext): Promise<Verificati
       kept = rest;
     }
   }
-  return { ok: true, flow: kept, claims, proven, reasons };
+  return { ok: true, flow: kept, claims, proven, reasons, keep };
 }
 
-// Subflow steps must point to a login flow of the same kind that passed (Login is the only subflow Phase 4 proposes),
-// without cycles or nesting deeper than maxDepth.
+// Subflow steps must point to a flow of the same kind that passed, outside any cycle, nesting at most maxDepth deep.
+// A generated Log-in step also needs a login flow as its target, and must cite guards its own entry sits behind.
 function checkSubflows(results: Verification[], ctx: VerifyContext): void {
   const byId = new Map(results.flatMap((result) => (result.ok ? [[result.flow.id, result] as const] : [])));
-  const drop = (result: Verified, step: Step, why: string) => {
-    result.flow = { ...result.flow, steps: result.flow.steps.filter((own) => own !== step) };
-    result.proven -= 1;
-    result.reasons.push(`${step.id} dropped: ${why}`);
+  const subflows = (result: Verified) => result.flow.steps.filter((step) => step.kind === 'subflow');
+  const problems = new Map<Step, string>();
+
+  // Whether `from` is reached again by following subflow references out of `to`.
+  const leadsBack = (to: string, from: string): boolean => {
+    const seen = new Set<string>();
+    for (const queue = [to]; queue.length > 0; ) {
+      const id = queue.shift() as string; // safe: the queue is not empty
+      if (id === from) return true;
+      if (seen.has(id)) continue;
+      seen.add(id);
+      const target = byId.get(id);
+      if (target !== undefined) queue.push(...subflows(target).flatMap((step) => step.subflow_ref ?? []));
+    }
+    return false;
   };
-  const depth = (result: Verified, stack: readonly string[]): number => {
-    let deepest = 0;
-    for (const step of result.flow.steps.filter((own) => own.kind === 'subflow')) {
+  // Where a flow starts: its own first step, or, for a flow built from subflows alone, where the first one it runs
+  // (other than Log-in) starts.
+  const entryOf = (result: Verified, seen: ReadonlySet<string>): string => {
+    const first = result.flow.steps.find((step) => step.kind !== 'subflow')?.evidence[0];
+    if (first !== undefined) return first.type === 'code' ? first.node_id : '';
+    const run = result.flow.steps.find((step) => step.kind === 'subflow' && !step.claim.startsWith(LOGIN_CLAIM));
+    const target = byId.get(run?.subflow_ref ?? '');
+    return target === undefined || seen.has(target.flow.id) ? '' : entryOf(target, new Set([...seen, target.flow.id]));
+  };
+  for (const result of byId.values()) {
+    const entry = entryOf(result, new Set([result.flow.id]));
+    for (const step of subflows(result)) {
       const target = byId.get(step.subflow_ref ?? '');
-      if (target === undefined || target.flow.kind !== result.flow.kind) drop(result, step, `${step.subflow_ref} is not one of the ${result.flow.kind.toUpperCase()} flows that passed`);
-      else if (!isLogin(target.flow, ctx.nodes)) drop(result, step, `${step.subflow_ref} is not a login flow`);
-      else if (stack.includes(target.flow.id)) drop(result, step, `${step.subflow_ref} leads back to ${result.flow.id} (a cycle)`);
-      else {
-        const below = 1 + depth(target, [...stack, target.flow.id]);
-        if (below > ctx.maxDepth) drop(result, step, `subflows would nest ${below} deep; the cap is ${ctx.maxDepth}`);
-        else deepest = Math.max(deepest, below);
+      if (target === undefined || target.flow.kind !== result.flow.kind) problems.set(step, `${step.subflow_ref} is not one of the ${result.flow.kind.toUpperCase()} flows that passed`);
+      else if (leadsBack(target.flow.id, result.flow.id)) problems.set(step, `${step.subflow_ref} leads back to ${result.flow.id} (a cycle)`);
+      else if (step.claim.startsWith(LOGIN_CLAIM)) {
+        const guards = new Set(ctx.nodes.out(entry, 'guarded-by').map((node) => node.id));
+        const unguarded = step.evidence.flatMap((item) => (item.type === 'code' && !guards.has(item.node_id) ? [item.node_id] : []));
+        if (!isLogin(target.flow, ctx.nodes)) problems.set(step, `${step.subflow_ref} is not a login flow`);
+        else if (unguarded.length > 0) problems.set(step, `${entry} is not guarded by ${unguarded.join(', ')}`);
       }
     }
+  }
+  // Depth along the references that are left, so no cycle remains to follow.
+  const memo = new Map<string, number>();
+  const depth = (result: Verified): number => {
+    let deepest = memo.get(result.flow.id);
+    if (deepest !== undefined) return deepest;
+    deepest = 0;
+    for (const step of subflows(result)) {
+      const target = problems.has(step) ? undefined : byId.get(step.subflow_ref ?? '');
+      if (target !== undefined) deepest = Math.max(deepest, 1 + depth(target));
+    }
+    memo.set(result.flow.id, deepest);
     return deepest;
   };
-  for (const result of byId.values()) depth(result, [result.flow.id]);
+  for (const result of byId.values()) {
+    for (const step of subflows(result)) {
+      const target = problems.has(step) ? undefined : byId.get(step.subflow_ref ?? '');
+      const below = target === undefined ? 0 : 1 + depth(target);
+      if (below > ctx.maxDepth) problems.set(step, `subflows would nest ${below} deep; the cap is ${ctx.maxDepth}`);
+    }
+  }
+  for (const result of byId.values()) {
+    for (const step of subflows(result)) {
+      const why = problems.get(step);
+      if (why === undefined) continue;
+      result.proven -= 1;
+      result.reasons.push(result.keep ? `${step.id} is not backed by source: ${why}` : `${step.id} dropped: ${why}`);
+      if (!result.keep) result.flow = { ...result.flow, steps: result.flow.steps.filter((own) => own !== step) };
+    }
+  }
 }
 
 // PLAN.md Phase 4 verifier: each claim is checked against the graph by node id; what source doesn't back is dropped.

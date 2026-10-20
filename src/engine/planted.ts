@@ -2,8 +2,10 @@
 // Each fake copies a genuine fixture flow and changes one thing. Used by verify.test.ts, with a stand-in grounding
 // Decider and with the real entailment model.
 import type { Flow } from '../model/flow.ts';
+import { runClaim } from './describe.ts';
 
-export type Kit = { copy(name: string): Flow; flow(name: string): Flow };
+// context: genuine-looking flows a fake needs beside it (verified with it, never counted as fakes).
+export type Kit = { copy(name: string): Flow; flow(name: string): Flow; context: unknown[] };
 export type Fake = { name: string; make: (kit: Kit) => unknown[] };
 
 type Step = Flow['steps'][number];
@@ -94,20 +96,22 @@ export const API_FAKES: Fake[] = [
     flow.steps.push({ ...structuredClone(last(kit.flow('POST /api/v1/users/register'))), id: 's9' });
     return flow;
   }) },
-  { name: 'two login flows that need each other (a cycle)', make: (kit) => {
-    const guard = at(kit.flow('GET /api/v1/orders'), 'subflow');
-    const [a, b] = [kit.copy('POST /api/v1/users/login'), kit.copy('POST /api/v1/users/login')];
-    a.steps.unshift({ ...structuredClone(guard), id: 's0', subflow_ref: b.id });
-    b.steps.unshift({ ...structuredClone(guard), id: 's0', subflow_ref: a.id });
+  { name: 'two flows that run each other (a cycle)', make: (kit) => {
+    const [a, b] = [kit.copy('GET /api/v1/orders'), kit.copy('GET /api/v1/orders/:orderId')];
+    const run = (target: Flow, id: string) => ({ id, kind: 'subflow' as const, claim: runClaim(target.name), subflow_ref: target.id, evidence: structuredClone(last(target).evidence), check: null, enabled: true });
+    a.steps.push(run(b, 's8'));
+    b.steps.push(run(a, 's8'));
     return [a, b];
   } },
-  { name: 'login flows nested five deep', make: (kit) => {
-    // Four made-up copies, each needing the next; the last needs the genuine login flow.
-    const guard = at(kit.flow('GET /api/v1/orders'), 'subflow');
-    const chain = [1, 2, 3, 4].map(() => kit.copy('POST /api/v1/users/login'));
-    const targets = [...chain.slice(1).map((flow) => flow.id), kit.flow('POST /api/v1/users/login').id];
-    chain.forEach((flow, i) => flow.steps.unshift({ ...structuredClone(guard), id: 's0', subflow_ref: targets[i] }));
-    return chain;
+  { name: 'subflows nested four deep', make: (kit) => {
+    // c3 runs a guarded flow (depth 2), c2 runs c3 (3, the cap), and the fake runs c2: 4.
+    const run = (target: Flow) => ({ id: 's8', kind: 'subflow' as const, claim: runClaim(target.name), subflow_ref: target.id, evidence: structuredClone(last(target).evidence), check: null, enabled: true });
+    const [fake, c2, c3] = [kit.copy('GET /api/v1/users/me'), kit.copy('GET /api/v1/users/me'), kit.copy('GET /api/v1/users/me')];
+    c3.steps.push(run(kit.flow('GET /api/v1/orders')));
+    c2.steps.push(run(c3));
+    fake.steps.push(run(c2));
+    kit.context.push(c2, c3);
+    return [fake];
   } },
 ];
 

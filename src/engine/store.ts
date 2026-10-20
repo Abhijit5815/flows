@@ -4,12 +4,16 @@ import { repoFile } from '../graph/store.ts';
 import { FlowSchema } from '../model/flow.ts';
 import { readCache, writeJsonAtomic } from '../shared/json-file.ts';
 
+const DecisionViewSchema = z.object({ label: z.string(), probs: z.record(z.string(), z.number()), by: z.enum(['decider', 'llm', 'fallback']) });
+
 // What one scan's flow engine produced for one repo. A deletable cache, like the graphs: it is rebuilt from source,
-// and the reviewer's verdicts live in the repo's rules (PLAN.md §13: SQLite comes with Phase 5).
+// and what people add lives in the repo's .flows/ (PLAN.md §3).
 export const FlowSetSchema = z.object({
   flows: z.array(FlowSchema),
   reasons: z.record(z.string(), z.array(z.string())), // the decision log, by flow id
-  rejected: z.array(z.object({ subject: z.string().min(1), name: z.string().min(1), reasons: z.array(z.string()).min(1) })),
+  // Candidates the engine did not keep; `flow` is the one a person can promote, when the engine could build it.
+  rejected: z.array(z.object({ subject: z.string().min(1), name: z.string().min(1), reasons: z.array(z.string()).min(1), flow: FlowSchema.optional() })),
+  decisions: z.record(z.string(), z.object({ destructive: DecisionViewSchema, category: DecisionViewSchema })), // "why this flow", by flow id
   unreachable: z.array(z.string()), // graph nodes no entry point leads to
   notes: z.array(z.string()),
 });

@@ -10,7 +10,7 @@ type Step = Flow['steps'][number];
 export type DraftStep = Omit<Step, 'id'>;
 
 // A candidate the engine did not build, and why; listed with the rejected flows (PLAN.md Phase 4).
-export type Skipped = { node: string; name: string; reason: string };
+export type Skipped = { node: string; name: string; reason: string; flow?: Flow }; // flow: what a person can promote
 export type Candidates = { flows: Flow[]; skipped: Skipped[]; notes: Record<string, string[]> };
 
 // Ids come from the nodes a flow is built around, so they stay the same from scan to scan.
@@ -26,7 +26,7 @@ export function template(kind: Step['kind'], nodes: readonly GraphNode[]): strin
 
 const isOk = (status: number | undefined) => status !== undefined && status >= 200 && status < 300;
 
-function draft(kind: Flow['kind'], key: string, steps: DraftStep[], graph: Lookup): Flow {
+export function draft(kind: Flow['kind'], key: string, steps: DraftStep[], graph: Lookup): Flow {
   const all = numbered(steps);
   return {
     schema_version: 0,
@@ -46,31 +46,52 @@ function draft(kind: Flow['kind'], key: string, steps: DraftStep[], graph: Looku
   };
 }
 
+// The steps the engine writes, shared by generated flows and by the flows a person draws or describes.
+export const openStep = (page: GraphNode): DraftStep => ({ kind: 'ui', claim: template('ui', [page]), evidence: [evidenceOf(page)], check: { kind: 'ui', page: label(page), evidence: [evidenceOf(page)] }, enabled: true });
+
+export const uiStep = (cited: GraphNode[]): DraftStep => ({ kind: 'ui', claim: template('ui', cited), evidence: cited.map(evidenceOf), check: null, enabled: true });
+
+// shortcut: a full URL means another service and "?" an unreadable path; neither can be a request, so the step is
+// left out (the caller notes why), never guessed.
+export function callStep(call: GraphNode): DraftStep | string {
+  if (call.kind !== 'api-call') return `${call.id} is not an API call`;
+  const { method, path } = call.attrs;
+  if (method === 'ALL' || !path.startsWith('/') || !(HTTP_METHODS as readonly string[]).includes(method)) {
+    return `${label(call)} at ${call.file}:${call.line} is left out: ${path.startsWith('http') ? 'it calls another service' : 'its path could not be read'}`;
+  }
+  return { kind: 'api', claim: template('api', [call]), request: { method: method as (typeof HTTP_METHODS)[number], path }, evidence: [evidenceOf(call)], check: null, enabled: true };
+}
+
+// Call the route and expect its only success response; a route that answers every method has no single request.
+export function routeStep(route: GraphNode, nodes: Lookup): DraftStep | string {
+  if (route.kind !== 'route') return `${route.id} is not a route`;
+  const { method, path } = route.attrs;
+  if (method === 'ALL') return 'ALL answers every method, so there is no single request to make';
+  const handler = nodes.out(route.id, 'handled-by')[0];
+  const ok = (handler === undefined ? [] : nodes.out(handler.id, 'responds-with')).filter((node) => node.kind === 'response' && isOk(node.attrs.status));
+  const response = ok.length === 1 && ok[0].kind === 'response' ? ok[0] : undefined;
+  const check: Step['check'] =
+    response === undefined || response.attrs.status === undefined
+      ? null
+      : { kind: 'api', status: response.attrs.status, ...(response.attrs.fields.length > 0 ? { fields: response.attrs.fields } : {}), evidence: [evidenceOf(response)] };
+  const cited = handler === undefined ? [route] : [route, handler];
+  return { kind: 'api', claim: template('api', cited), request: { method, path }, evidence: cited.map(evidenceOf), check, enabled: true };
+}
+
 // One flow per route: call it, and expect its only success response.
 function apiCandidates(graph: Graph, nodes: Lookup): Candidates {
   const found: Candidates = { flows: [], skipped: [], notes: {} };
   for (const route of graph.nodes) {
     if (route.kind !== 'route') continue;
-    const { method, path } = route.attrs;
-    if (method === 'ALL') {
-      found.skipped.push({ node: route.id, name: label(route), reason: 'ALL answers every method, so there is no single request to make' });
-      continue;
-    }
-    const handler = nodes.out(route.id, 'handled-by')[0];
-    const ok = (handler === undefined ? [] : nodes.out(handler.id, 'responds-with')).filter((node) => node.kind === 'response' && isOk(node.attrs.status));
-    const response = ok.length === 1 && ok[0].kind === 'response' ? ok[0] : undefined;
-    const check: Step['check'] =
-      response === undefined || response.attrs.status === undefined
-        ? null
-        : { kind: 'api', status: response.attrs.status, ...(response.attrs.fields.length > 0 ? { fields: response.attrs.fields } : {}), evidence: [evidenceOf(response)] };
-    const cited = handler === undefined ? [route] : [route, handler];
-    found.flows.push(draft('api', route.id, [{ kind: 'api', claim: template('api', cited), request: { method, path }, evidence: cited.map(evidenceOf), check, enabled: true }], nodes));
+    const step = routeStep(route, nodes);
+    if (typeof step === 'string') found.skipped.push({ node: route.id, name: label(route), reason: step });
+    else found.flows.push(draft('api', route.id, [step], nodes));
   }
   return found;
 }
 
 // Breadth-first along one edge kind, the start nodes included.
-function along(start: readonly GraphNode[], kind: string, nodes: Lookup): GraphNode[] {
+export function along(start: readonly GraphNode[], kind: string, nodes: Lookup): GraphNode[] {
   const seen = new Map<string, GraphNode>();
   for (const queue = [...start]; queue.length > 0; ) {
     const node = queue.shift() as GraphNode; // safe: the queue is not empty
@@ -90,21 +111,16 @@ function webCandidates(graph: Graph, nodes: Lookup): Candidates {
   const add = (key: string, steps: DraftStep[], calls: readonly GraphNode[]) => {
     const notes: string[] = [];
     for (const call of calls) {
-      if (call.kind !== 'api-call') continue;
-      const { method, path } = call.attrs;
-      // shortcut: a full URL means another service and "?" an unreadable path; both are left out, noted, not guessed.
-      if (method === 'ALL' || !path.startsWith('/') || !(HTTP_METHODS as readonly string[]).includes(method)) {
-        notes.push(`${label(call)} at ${call.file}:${call.line} is left out: ${path.startsWith('http') ? 'it calls another service' : 'its path could not be read'}`);
-        continue;
-      }
-      steps.push({ kind: 'api', claim: template('api', [call]), request: { method: method as (typeof HTTP_METHODS)[number], path }, evidence: [evidenceOf(call)], check: null, enabled: true });
+      const step = callStep(call);
+      if (typeof step === 'string') notes.push(step);
+      else steps.push(step);
     }
     const flow = draft('ui', key, steps, nodes);
     found.flows.push(flow);
     if (notes.length > 0) found.notes[flow.id] = notes;
   };
-  const open = (page: GraphNode): DraftStep => ({ kind: 'ui', claim: template('ui', [page]), evidence: [evidenceOf(page)], check: { kind: 'ui', page: label(page), evidence: [evidenceOf(page)] }, enabled: true });
-  const ui = (cited: GraphNode[]): DraftStep => ({ kind: 'ui', claim: template('ui', cited), evidence: cited.map(evidenceOf), check: null, enabled: true });
+  const open = openStep;
+  const ui = uiStep;
 
   for (const page of pages) {
     const loads = [...new Map(along([page], 'renders', nodes).flatMap((owner) => nodes.out(owner.id, 'calls')).map((call) => [call.id, call])).values()];
@@ -131,7 +147,8 @@ function webCandidates(graph: Graph, nodes: Lookup): Candidates {
         built.add(action.id);
         const calls = nodes.out(action.id, 'calls');
         if (calls.length === 0 && !(action.kind === 'action' && action.attrs.server)) {
-          found.skipped.push({ node: action.id, name: `Click ${label(action)} on ${label(page)}`, reason: "it makes no API call and runs no server action, so source doesn't show what it does" });
+          const flow = draft('ui', action.id, [open(page), ui([action, owner])], nodes);
+          found.skipped.push({ node: action.id, name: flow.name, reason: "it makes no API call and runs no server action, so source doesn't show what it does", flow });
           continue;
         }
         for (const call of calls.length > 0 ? calls : [undefined]) {

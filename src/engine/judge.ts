@@ -1,6 +1,6 @@
 import type { Flow } from '../model/flow.ts';
 
-export type Verdict = 'correct' | 'wrong';
+export type Verdict = 'correct' | 'wrong' | 'never';
 
 export type JudgeInput = {
   claims: number;
@@ -18,6 +18,7 @@ export type Judgement = Pick<Flow, 'status' | 'confidence' | 'enabled'> & { reas
 // app, Phase 3, raises it). Fail closed: only verified, non-destructive flows start enabled, until a reviewer says so.
 export function judge(input: JudgeInput): Judgement {
   if (input.verdict === 'wrong') return { status: 'rejected', confidence: 0, enabled: false, reasons: ['a reviewer marked it wrong'] };
+  if (input.verdict === 'never') return { status: 'rejected', confidence: 0, enabled: false, reasons: ['a reviewer said never to suggest it again'] };
   const reasons: string[] = [];
   let status: Flow['status'] = 'verified';
   if (input.unreachable !== undefined) {

@@ -31,7 +31,7 @@ const ApiCheckSchema = z
 // The expected result of a step, taken from source; a step's check is null when source is silent.
 const CheckSchema = z.discriminatedUnion('kind', [UiCheckSchema, ApiCheckSchema]);
 
-const StepSchema = z
+export const StepSchema = z
   .object({
     id: z.string().min(1),
     kind: z.enum(['ui', 'api', 'subflow']),

@@ -39,9 +39,14 @@ export const words = (identifier: string): string =>
 
 const OWNERS = new Set(['component', 'page', 'layout']);
 
+// A generated Log-in step starts with this; a subflow step a person makes says which flow it runs.
+export const LOGIN_CLAIM = 'Log in first:';
+export const runClaim = (name: string): string => `Run "${name}"`;
+export const isRunClaim = (claim: string): boolean => /^Run ".+"$/.test(claim);
+
 // The template claim for a step citing these nodes (in this order), or undefined when they fit none.
 export function claimOf(kind: Step['kind'], nodes: readonly GraphNode[]): string | undefined {
-  if (kind === 'subflow') return nodes.length > 0 && nodes.every((node) => node.kind === 'guard') ? `Log in first: guarded by ${nodes.map(label).join(', ')}` : undefined;
+  if (kind === 'subflow') return nodes.length > 0 && nodes.every((node) => node.kind === 'guard') ? `${LOGIN_CLAIM} guarded by ${nodes.map(label).join(', ')}` : undefined;
   const [first, second, ...rest] = nodes;
   if (first === undefined || rest.length > 0) return undefined;
   if (kind === 'ui' && first.kind === 'page' && second === undefined) return `Open ${label(first)}`;

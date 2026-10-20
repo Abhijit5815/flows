@@ -50,7 +50,7 @@ Components:
 - **LLM gateway:** our own small interface with swappable implementations: OpenAI-compatible HTTP (e.g. Ollama) and the official Anthropic SDK for Claude. Roles: `llm` (naming, descriptions, `unknown` cases) and `embedder`; each can be pointed at a different model. The default `llm` is a free local model (Ollama), so nothing leaves the machine; hosted models need the user's own API key. Chat subscriptions (Claude Pro, Copilot, Cursor) can't be used by an outside tool. Recommended hosted option: OpenRouter with GLM 5.3 (`z-ai/glm-5.3`), which is OpenAI-compatible, so it needs config only; users should turn on OpenRouter's privacy setting that blocks providers which collect data (or require zero data retention), because by default it may route to providers that store prompts.
 - **Embedding manager:** user picks the model (see 6).
 - **Decider:** our own `decide(task_type, input, allowed_labels) -> {label, prob, all_probs, version}` (see 7).
-- **Store:** SQLite for local single-user mode, from Phase 5 (human edits, version history); until then generated flows are per-repo JSON files in the deletable cache, since they can be rebuilt from source. Learned rules and review verdicts live in the user's repo (`.flows/`); the tool's own storage holds only a deletable cache.
+- **Store:** generated flows are per-repo JSON files in the deletable cache, since they can be rebuilt from source. Everything a person adds lives as JSON in the user's repo (`.flows/`): learned rules and review feedback (`rules.json`), human edits and added flows (`flows.json`), so it is reviewed and versioned with the code and git history is its version history. No SQLite. The tool's own storage holds only a deletable cache.
 - **Trace:** append-only provenance log for every decision and model call.
 
 ## 4. Data model (sketch)
@@ -203,7 +203,8 @@ First release: Next.js 14 (App Router) frontend and Express 4 + TypeScript backe
 - Parser tools, decided 2026-10-19: ast-grep (`@ast-grep/napi`, MIT) for declarative pattern rules and ts-morph (MIT; bundles its own TypeScript 6.0.2, so the project's TypeScript 7 doesn't affect it) for resolving constants, imports and prefixes. The tree-sitter TypeScript grammar is not used directly (its npm package was last released in 2024 and needs an older tree-sitter). Spike: spikes/parsers/RESULTS.md.
 - Entailment model, decided 2026-10-20: cross-encoder/nli-deberta-v3-xsmall at fp32, from the publisher's own repo (Apache-2.0 on the model card; trained on SNLI and MultiNLI only). Measured: p95 7.3 ms per claim on CPU.
 - Subflow nesting cap, confirmed 2026-10-20: 3, in config.
-- Flow store, decided 2026-10-20: per-repo JSON files in the cache until Phase 5 brings SQLite.
+- Flow store, decided 2026-10-20: generated flows are per-repo JSON files in the cache. At the start of Phase 5 (same day): no SQLite; human edits, added flows and feedback live as JSON in the repo's `.flows/`, and git history is the version history.
+- Phase 5, decided 2026-10-20: the canvas is React Flow (`@xyflow/react`, MIT). The exit's usability pass with 2-3 QA users happens once Flows runs on the user's app; until then Claude checks the exit itself on the test apps. Badges that need the live app (no stable selector, not observed, role not explored, "Walk this in the inspector") come with Phase 3.
 - Still open: whether to cut the Phase 7 drift monitor.
 - Hosted LLM check (left open when Phase 1 closed, 2026-10-19): the hosted path of the LLM gateway (Claude through the Anthropic SDK, or any OpenAI-compatible provider) is tested only against a fake server. A real call still needs a user's own API key; Phase 1 closed with the local model (Ollama `llama3.2:3b`) verified live.
 

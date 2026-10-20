@@ -6,14 +6,16 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
 import { categories, type Project } from '../config/project.ts';
-import { verdictsOf } from '../engine/engine.ts';
+import { verdictsOf, type EngineDeps } from '../engine/engine.ts';
 import { exportFlows } from '../engine/export.ts';
 import { loadFlows } from '../engine/store.ts';
 import { listFiles } from '../ingest/files.ts';
 import { loadRules } from '../rules/learned.ts';
 import { TOKEN_HEADER, type ProjectView, type Snippet } from './api.ts';
+import { BadRequest, writes } from './writes.ts';
 
 const CONTEXT_LINES = 6; // shown above and below a cited line
+const MAX_BODY = 1 << 20;
 
 export type Ui = { url: string; close(): Promise<void> };
 
@@ -61,14 +63,46 @@ function send(res: ServerResponse, status: number, body: string, type: string): 
 }
 const json = (res: ServerResponse, status: number, value: unknown) => send(res, status, JSON.stringify(value), 'application/json');
 
+async function body(req: IncomingMessage): Promise<unknown> {
+  if (!(req.headers['content-type'] ?? '').startsWith('application/json')) throw new HttpError(415, 'send JSON');
+  let size = 0;
+  const chunks: Buffer[] = [];
+  for await (const chunk of req as AsyncIterable<Buffer>) {
+    size += chunk.length;
+    if (size > MAX_BODY) throw new HttpError(413, 'request body too large');
+    chunks.push(chunk);
+  }
+  try {
+    return JSON.parse(Buffer.concat(chunks).toString('utf8'));
+  } catch {
+    throw new HttpError(400, 'the request body is not JSON');
+  }
+}
+
 // PLAN.md Phase 5: the review page, a local web page the CLI opens. It listens on 127.0.0.1 only. Every API call
 // carries this run's random token, which only the page itself can read, and the Host header must be this server's,
 // so other websites can neither call the API nor reach it by DNS rebinding.
-export async function startUi(project: Project, port = 0): Promise<Ui> {
+export async function startUi(start: Project, deps: EngineDeps, port = 0): Promise<Ui> {
   const token = randomBytes(24).toString('hex');
   const assets = await bundle();
   const listed = new Map<string, Set<string>>();
+  const changes = writes(start, deps);
+  let project = start;
   let hosts = new Set<string>();
+  // One write at a time: each rebuilds flows and rewrites files that the next one reads.
+  let queue: Promise<unknown> = Promise.resolve();
+  const serial = <T>(work: () => Promise<T>): Promise<T> => {
+    const next = queue.then(work, work);
+    queue = next.catch(() => {});
+    return next;
+  };
+  const WRITES: Record<string, (input: unknown) => Promise<void>> = {
+    '/api/feedback': changes.feedback,
+    '/api/flows/edit': changes.edit,
+    '/api/flows/add': changes.add,
+    '/api/bulk': changes.bulk,
+    '/api/categories': changes.categories,
+  };
 
   const view = (): ProjectView => ({
     name: project.config.name,
@@ -108,12 +142,19 @@ export async function startUi(project: Project, port = 0): Promise<Ui> {
     if (req.method === 'GET' && url.pathname === '/api/project') return json(res, 200, view());
     if (req.method === 'GET' && url.pathname === '/api/snippet') return json(res, 200, snippet(url.searchParams));
     if (req.method === 'GET' && url.pathname === '/api/export') return json(res, 200, exportFlows(project.config.repos.flatMap((repo) => loadFlows(project, repo) ?? []), categories(project.config)));
+    const write = WRITES[url.pathname];
+    if (req.method === 'POST' && write !== undefined) {
+      const input = await body(req);
+      await serial(() => write(input));
+      project = changes.project();
+      return json(res, 200, view());
+    }
     throw new HttpError(404, `no API at ${req.method} ${url.pathname}`);
   };
 
   const server = createServer((req, res) => {
     handle(req, res).catch((error: unknown) => {
-      const status = error instanceof HttpError ? error.status : 500;
+      const status = error instanceof HttpError ? error.status : error instanceof BadRequest ? 400 : 500;
       json(res, status, { error: error instanceof Error ? error.message : String(error) });
     });
   });

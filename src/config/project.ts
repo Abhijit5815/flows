@@ -3,7 +3,7 @@ import { existsSync, readFileSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, relative, resolve } from 'node:path';
 import { z } from 'zod';
-import { CategorySchema, DEFAULT_CATEGORIES, type Category } from '../model/category.ts';
+import { CategorySchema, DEFAULT_CATEGORIES, FALLBACK_CATEGORY_ID, type Category } from '../model/category.ts';
 import { ConfigError } from '../shared/errors.ts';
 import { writeJsonAtomic } from '../shared/json-file.ts';
 import { parseOrThrow } from '../shared/validate.ts';
@@ -127,6 +127,18 @@ export function setFramework(project: Project, target: Repo, framework: string |
     return pinned === undefined ? repo : { ...repo, framework: pinned };
   });
   const updated = validate(project.root, { ...project.raw, repos });
+  write(updated);
+  return updated;
+}
+
+// The project's categories, as edited on the review page. The fallback category must stay, as it was: flows go
+// there when nothing decides.
+export function setCategories(project: Project, list: readonly Category[]): Project {
+  const fallback = DEFAULT_CATEGORIES.find((category) => category.id === FALLBACK_CATEGORY_ID);
+  const kept = list.find((category) => category.id === FALLBACK_CATEGORY_ID);
+  if (kept === undefined || kept.name !== fallback?.name || kept.color !== fallback.color || kept.editable) throw new ConfigError(`the "${FALLBACK_CATEGORY_ID}" category can't be removed or edited`);
+  if (new Set(list.map((category) => category.id)).size !== list.length) throw new ConfigError('category ids must be unique');
+  const updated = validate(project.root, { ...project.raw, categories: list });
   write(updated);
   return updated;
 }

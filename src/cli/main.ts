@@ -412,7 +412,9 @@ async function run(): Promise<void> {
     case 'ui': {
       const port = values.port === undefined ? 0 : Number(values.port);
       if (!Number.isInteger(port) || port < 0 || port > 65535) throw new FlowsError(`--port must be a port number, not "${values.port}"`);
-      const ui = await startUi(loadProject(root), port);
+      const project = loadProject(root);
+      const embedder = createEmbeddingProvider(project.config.embedder, join(storageDir(project), 'models'), progress());
+      const ui = await startUi(project, engineDeps(project, embedder), port);
       console.log(`review page: ${ui.url}  (Ctrl-C stops it)`);
       openBrowser(ui.url);
       return;

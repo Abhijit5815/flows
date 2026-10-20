@@ -14,7 +14,7 @@ export const TraceEventSchema = z.discriminatedUnion('kind', [
     inputs_ref: z.string().regex(/^[0-9a-f]{64}$/), // sha256 of the input
     allowed_labels: z.array(z.string()),
     label: z.string().min(1),
-    source: z.enum(['rule', 'classifier']),
+    source: z.enum(['rule', 'classifier', 'entailment']),
     probs: z.record(z.string(), z.number().min(0).max(1)),
     threshold: z.object({ min_prob: z.number(), min_margin: z.number() }),
     model_version: z.string().min(1),

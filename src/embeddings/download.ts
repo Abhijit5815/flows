@@ -9,14 +9,17 @@ import type { CatalogueEntry } from './catalogue.ts';
 
 export type Progress = (file: string, received: number, total: number) => void;
 
-type ExpectedFile = CatalogueEntry['files'][number];
+// What a download needs; embedding models and the entailment model both have it.
+export type ModelFiles = Pick<CatalogueEntry, 'source' | 'revision' | 'files'>;
+
+type ExpectedFile = ModelFiles['files'][number];
 
 // <models>/<owner>/<name>/<revision>, so different revisions never share files.
-export const modelDir = (modelsDir: string, entry: CatalogueEntry): string =>
+export const modelDir = (modelsDir: string, entry: ModelFiles): string =>
   join(modelsDir, new URL(entry.source).pathname.slice(1), entry.revision);
 
 // Fetches missing files from the publisher at the pinned revision; a file is kept only if its sha256 matches.
-export async function ensureModelFiles(entry: CatalogueEntry, modelsDir: string, onProgress?: Progress): Promise<string> {
+export async function ensureModelFiles(entry: ModelFiles, modelsDir: string, onProgress?: Progress): Promise<string> {
   const dir = modelDir(modelsDir, entry);
   for (const file of entry.files) {
     const target = join(dir, file.path);

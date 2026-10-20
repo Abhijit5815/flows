@@ -3,7 +3,8 @@ import './styles.css';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import type { ProjectView } from '../api.ts';
-import { Edit, Review } from './actions.tsx';
+import { Edit, Problem, Review, useSend } from './actions.tsx';
+import { AddFlow } from './add.tsx';
 import { Bulk } from './bulk.tsx';
 import { Canvas } from './canvas.tsx';
 import { CategoryEditor } from './categories.tsx';
@@ -29,7 +30,8 @@ function App() {
   const [error, setError] = useState<string | undefined>();
   const [filters, setFilters] = useState<Filters>(NO_FILTERS);
   const [selected, setSelected] = useState<string | undefined>();
-  const [side, setSide] = useState<'flow' | 'rejected' | 'categories'>('flow');
+  const [side, setSide] = useState<'flow' | 'rejected' | 'categories' | 'add'>('flow');
+  const promoting = useSend((view) => setProject(view));
 
   const load = useCallback(() => get<ProjectView>('/api/project').then(setProject, (failure: Error) => setError(failure.message)), []);
   useEffect(() => {
@@ -39,7 +41,7 @@ function App() {
   const items = useMemo(() => (project === undefined ? [] : itemsOf(project)), [project]);
   const shown = useMemo(() => items.filter((item) => !hidden(item) && matches(item, filters)), [items, filters]);
   const current = items.find((item) => item.key === selected);
-  const toggle = (panel: 'rejected' | 'categories') => setSide(side === panel ? 'flow' : panel);
+  const toggle = (panel: 'rejected' | 'categories' | 'add') => setSide(side === panel ? 'flow' : panel);
   const select = (key: string) => {
     setSelected(key);
     setSide('flow');
@@ -78,6 +80,9 @@ function App() {
           {shown.length} of {items.length} flows
         </span>
         <div className="actions">
+          <button type="button" onClick={() => toggle('add')} aria-pressed={side === 'add'}>
+            Add flow
+          </button>
           <button type="button" onClick={() => toggle('categories')} aria-pressed={side === 'categories'}>
             Categories
           </button>
@@ -94,7 +99,21 @@ function App() {
         <div className="canvas">
           {shown.length === 0 ? <p className="page-message">No flow matches these filters.</p> : <Canvas items={shown} categories={project.categories} selected={selected} onSelect={select} />}
         </div>
-        {side === 'rejected' ? <RejectedList project={project} onClose={() => setSide('flow')} /> : null}
+        {side === 'rejected' ? (
+          <RejectedList
+            project={project}
+            onClose={() => setSide('flow')}
+            problem={<Problem error={promoting.error} />}
+            action={(repo, rejected) =>
+              rejected.flow === undefined ? null : (
+                <button type="button" disabled={promoting.busy} onClick={() => promoting.send('/api/flows/add', { repo: repoKey(repo), flow: rejected.flow })}>
+                  Promote to a flow
+                </button>
+              )
+            }
+          />
+        ) : null}
+        {side === 'add' ? <AddFlow project={project} onView={setProject} onClose={() => setSide('flow')} /> : null}
         {side === 'categories' ? <CategoryEditor project={project} onView={setProject} onClose={() => setSide('flow')} /> : null}
         {side === 'flow' && current !== undefined ? (
           <Panel item={current} onClose={() => setSelected(undefined)}>

@@ -55,8 +55,11 @@ export const ProjectConfigSchema = z.object({
   // The "possibly missed" list after each scan: how alike a function must be to the graph's handlers or actions.
   possibly_missed: z.object({ min_similarity: z.number().min(0).max(1).default(0.78), limit: z.int().positive().default(20) }).prefault({}),
   // The flow engine's judge: the confidence of a source-only flow whose claims are all proven (agreement with the
-  // live app raises it to 1 in Phase 3), and how deep subflows may nest (PLAN.md §4).
-  engine: z.object({ source_only_weight: z.number().min(0).max(1).default(0.9), max_subflow_depth: z.int().min(1).default(3) }).prefault({}),
+  // live app raises it to 1 in Phase 3), and how deep subflows may nest (PLAN.md §4). describe_min_similarity: how
+  // close a description must come to a node before the review page proposes a flow from it.
+  engine: z
+    .object({ source_only_weight: z.number().min(0).max(1).default(0.9), max_subflow_depth: z.int().min(1).default(3), describe_min_similarity: z.number().min(0).max(1).default(0.65) })
+    .prefault({}),
   storage_dir: z.string().min(1).optional(),
   categories: z.array(CategorySchema).min(1).optional(),
 });

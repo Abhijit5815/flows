@@ -6,13 +6,17 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
 import { categories, type Project } from '../config/project.ts';
+import type { EmbeddingProvider } from '../embeddings/provider.ts';
 import { verdictsOf, type EngineDeps } from '../engine/engine.ts';
 import { exportFlows } from '../engine/export.ts';
 import { loadFlows } from '../engine/store.ts';
+import { repoFile } from '../graph/store.ts';
 import { listFiles } from '../ingest/files.ts';
 import { loadRules } from '../rules/learned.ts';
+import { parseOrThrow } from '../shared/validate.ts';
 import { TOKEN_HEADER, type ProjectView, type Snippet } from './api.ts';
-import { BadRequest, writes } from './writes.ts';
+import { describeFlow, palette } from './propose.ts';
+import { BadRequest, DescribeBody, writes } from './writes.ts';
 
 const CONTEXT_LINES = 6; // shown above and below a cited line
 const MAX_BODY = 1 << 20;
@@ -82,7 +86,7 @@ async function body(req: IncomingMessage): Promise<unknown> {
 // PLAN.md Phase 5: the review page, a local web page the CLI opens. It listens on 127.0.0.1 only. Every API call
 // carries this run's random token, which only the page itself can read, and the Host header must be this server's,
 // so other websites can neither call the API nor reach it by DNS rebinding.
-export async function startUi(start: Project, deps: EngineDeps, port = 0): Promise<Ui> {
+export async function startUi(start: Project, deps: EngineDeps & { embedder: EmbeddingProvider }, port = 0): Promise<Ui> {
   const token = randomBytes(24).toString('hex');
   const assets = await bundle();
   const listed = new Map<string, Set<string>>();
@@ -102,6 +106,7 @@ export async function startUi(start: Project, deps: EngineDeps, port = 0): Promi
     '/api/flows/add': changes.add,
     '/api/bulk': changes.bulk,
     '/api/categories': changes.categories,
+    '/api/draw': changes.draw,
   };
 
   const view = (): ProjectView => ({
@@ -142,6 +147,14 @@ export async function startUi(start: Project, deps: EngineDeps, port = 0): Promi
     if (req.method === 'GET' && url.pathname === '/api/project') return json(res, 200, view());
     if (req.method === 'GET' && url.pathname === '/api/snippet') return json(res, 200, snippet(url.searchParams));
     if (req.method === 'GET' && url.pathname === '/api/export') return json(res, 200, exportFlows(project.config.repos.flatMap((repo) => loadFlows(project, repo) ?? []), categories(project.config)));
+    if (req.method === 'GET' && url.pathname === '/api/nodes') return json(res, 200, palette(changes.graphOf(url.searchParams.get('repo') ?? '').graph));
+    if (req.method === 'POST' && url.pathname === '/api/describe') {
+      const { repo: key, text } = parseOrThrow(DescribeBody, await body(req), 'description', BadRequest);
+      const { repo, graph } = changes.graphOf(key);
+      // Serial too: the node vectors are cached on disk.
+      const flows = loadFlows(project, repo)?.flows ?? [];
+      return json(res, 200, await serial(() => describeFlow(graph, text, flows, deps.embedder, repoFile(project, 'describe-vectors', repo), project.config.engine.describe_min_similarity)));
+    }
     const write = WRITES[url.pathname];
     if (req.method === 'POST' && write !== undefined) {
       const input = await body(req);

@@ -4,12 +4,14 @@ import { setCategories, type Project, type Repo } from '../config/project.ts';
 import { loadEdits, OverrideSchema, saveAdded, saveOverride, type OverridePatch } from '../engine/edits.ts';
 import { refreshFlows, type EngineDeps } from '../engine/engine.ts';
 import { loadFlows } from '../engine/store.ts';
+import type { Graph } from '../graph/schema.ts';
 import { loadGraph } from '../graph/store.ts';
 import { CategorySchema } from '../model/category.ts';
 import { FlowSchema } from '../model/flow.ts';
 import { addRule, FEEDBACK_KINDS, today } from '../rules/learned.ts';
 import { ConfigError, FlowsError } from '../shared/errors.ts';
 import { parseOrThrow } from '../shared/validate.ts';
+import { drawFlow } from './propose.ts';
 
 // What the review page may change. Every body is checked here, at the edge, before anything is written.
 const RepoKey = z.string().min(1); // "<role>:<path>"
@@ -24,6 +26,8 @@ export const BulkBody = z.object({
   patch: Patch.optional(),
   verdict: z.enum(['correct', 'wrong', 'never']).optional(),
 });
+export const DrawBody = z.object({ repo: RepoKey, nodes: z.array(z.string().min(1)).min(1).max(50), name: z.string().trim().min(1).max(200) });
+export const DescribeBody = z.object({ repo: RepoKey, text: z.string().trim().min(3).max(500) });
 export const CategoriesBody = z.object({ categories: z.array(CategorySchema).min(1), merges: z.array(z.object({ from: z.string().min(1), to: z.string().min(1) })).default([]) });
 
 // A request the page sent that can't be carried out as asked; the server answers 400 with the message.
@@ -31,6 +35,8 @@ export class BadRequest extends FlowsError {}
 
 export type Writes = {
   project(): Project;
+  graphOf(repoKey: string): { repo: Repo; graph: Graph };
+  draw(body: unknown): Promise<void>;
   feedback(body: unknown): Promise<void>;
   edit(body: unknown): Promise<void>;
   add(body: unknown): Promise<void>;
@@ -67,8 +73,24 @@ export function writes(start: Project, deps: EngineDeps): Writes {
   const verdict = (repo: Repo, flow: string, kind: (typeof FEEDBACK_KINDS)[number], extra: { step?: string; comment?: string; place?: string } = {}) =>
     addRule(dirOf(repo), { type: 'feedback', flow, kind, ...extra, added: today() });
 
+  const graphOf = (key: string): { repo: Repo; graph: Graph } => {
+    const repo = repoOf(key);
+    const graph = loadGraph(project, repo);
+    if (graph === undefined) throw new BadRequest(`${repo.role} ${repo.path} has no graph yet; run "flows scan"`);
+    return { repo, graph };
+  };
+
   return {
     project: () => project,
+    graphOf,
+    async draw(body) {
+      const { repo: key, nodes, name } = parseOrThrow(DrawBody, body, 'drawn flow', BadRequest);
+      const { repo, graph } = graphOf(key);
+      const flow = drawFlow(graph, nodes, name, loadFlows(project, repo)?.flows ?? []);
+      if (typeof flow === 'string') throw new BadRequest(flow);
+      saveAdded(dirOf(repo), flow);
+      await refresh([repo]);
+    },
     async feedback(body) {
       const { repo: key, flow, kind, ...extra } = parseOrThrow(FeedbackBody, body, 'feedback', BadRequest);
       const repo = repoOf(key);

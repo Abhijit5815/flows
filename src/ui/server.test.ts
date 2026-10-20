@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { addRepo, categories } from '../config/project.ts';
 import type { Decider } from '../decider/decider.ts';
+import type { EmbeddingProvider } from '../embeddings/provider.ts';
 import { buildFlows } from '../engine/engine.ts';
 import { OptionalLlm } from '../engine/llm.ts';
 import { saveFlows } from '../engine/store.ts';
@@ -25,6 +26,18 @@ let token = '';
 
 const unsure: Decider = { decide: async () => ({ label: 'unknown', prob: 0.5, all_probs: {}, version: 'stub' }) };
 
+// Stand-in embedder: one dimension per word below, so a description matches the nodes that share its words.
+const WORDS = ['login', 'cart', 'profile', 'products', 'orders', 'invoices'];
+const embedder: EmbeddingProvider = {
+  version: 'words',
+  embed: async (texts) =>
+    texts.map((text) => {
+      const vector = Float32Array.from([...WORDS.map((word) => (text.toLowerCase().includes(word) ? 1 : 0)), 0.05]);
+      const norm = Math.hypot(...vector);
+      return vector.map((value) => value / norm);
+    }),
+};
+
 before(async () => {
   const project = addRepo(tempProject(join(tmp, 'project')), fixture, 'web');
   const repo = project.config.repos[0];
@@ -32,7 +45,7 @@ before(async () => {
   assert.ok(graph);
   const deps = { decider: unsure, grounding: unsure, llm: new OptionalLlm(undefined, join(tmp, 'llm.json'), () => {}), trace: new MemoryTraceSink(), categories: categories(project.config), categoryLabels: [], config: project.config.engine };
   saveFlows(project, repo, await buildFlows(graph, { verdicts: new Map(), edits: { schema_version: 0, overrides: {}, added: [] } }, deps));
-  ui = await startUi(project, deps);
+  ui = await startUi(project, { ...deps, embedder });
   token = /name="flows-token" content="([0-9a-f]+)"/.exec(await (await fetch(ui.url)).text())?.[1] ?? '';
 });
 after(async () => {
@@ -124,3 +137,17 @@ test('extracting steps as a subflow: the new flow and the flow that now runs it 
   );
 });
 
+test('the palette, drawing a flow from picked nodes, and describing one in words', async () => {
+  const view = (await (await api('/api/project')).json()) as ProjectView;
+  const repo = `web:${view.repos[0].path}`;
+  const nodes = (await (await api(`/api/nodes?repo=${encodeURIComponent(repo)}`)).json()) as { id: string; kind: string }[];
+  assert.deepEqual([...new Set(nodes.map((node) => node.kind))].sort(), ['action', 'api-call', 'form', 'page']);
+  const drawn = (await (await post('/api/draw', { repo, nodes: ['web:page:/account', 'web:form:ProfileForm#form', 'web:api-call:PATCH /api/me'], name: 'Update my profile' })).json()) as ProjectView;
+  const made = drawn.repos[0].set?.flows.find((flow) => flow.name === 'Update my profile');
+  assert.deepEqual([made?.status, made?.steps.map((step) => step.kind)], ['verified', ['subflow', 'ui', 'ui', 'api']]);
+  assert.equal((await post('/api/draw', { repo, nodes: ['web:page:/nowhere'], name: 'x' })).status, 400);
+  const described = (await (await post('/api/describe', { repo, text: 'add products to the cart' })).json()) as { flow?: { steps: { claim: string }[] }; message: string };
+  assert.ok(described.flow, described.message);
+  const nothing = (await (await post('/api/describe', { repo, text: 'export invoices as a spreadsheet' })).json()) as { flow?: unknown; closest: unknown[] };
+  assert.deepEqual([nothing.flow, nothing.closest.length], [undefined, 5]);
+});

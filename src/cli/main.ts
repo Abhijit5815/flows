@@ -1,3 +1,4 @@
+import { spawn } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { basename, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -29,6 +30,7 @@ import { FlowsError } from '../shared/errors.ts';
 import { readCache, writeJsonAtomic } from '../shared/json-file.ts';
 import type { TraceEvent } from '../trace/event.ts';
 import { JsonlTraceSink, readTrace, traceFile } from '../trace/sink.ts';
+import { startUi } from '../ui/server.ts';
 
 const USAGE = `usage: flows <command> [--project <dir>]
   init [--name <name>]                     create .flows/config.json in the project folder
@@ -40,6 +42,8 @@ const USAGE = `usage: flows <command> [--project <dir>]
                                            then its flows
   show <kind> [--json]                     what the last scan found: routes, pages, handlers, guards, ... missed,
                                            or flows, rejected (with reasons) and unreachable (code no entry reaches)
+  ui [--port <n>]                          the review page: the flows on a canvas with their evidence (a local web
+                                           page; Ctrl-C stops it)
   review <flow-id> correct|wrong|never [--comment <text>] [--repo <path>]   a reviewer's verdict (never: don't
                                            suggest it again), kept in the repo's rules; the next scan applies it
                                            (--repo when two repos have that id)
@@ -72,6 +76,7 @@ const { values, positionals } = parseArgs({
     samples: { type: 'string' },
     comment: { type: 'string' },
     repo: { type: 'string' },
+    port: { type: 'string' },
     out: { type: 'string' },
   },
 });
@@ -211,6 +216,12 @@ function showFlows(project: Project, what: 'flows' | 'rejected' | 'unreachable')
     const correct = marked.filter((verdict) => verdict === 'correct').length;
     console.log(`  reviewed ${marked.length} of ${set.flows.length}: ${correct} correct, ${marked.length - correct} wrong${marked.length > 0 ? ` (precision ${((100 * correct) / marked.length).toFixed(0)}%)` : ''}`);
   }
+}
+
+// Best effort: the URL is printed either way.
+function openBrowser(url: string): void {
+  const [command, args] = process.platform === 'darwin' ? ['open', [url]] : process.platform === 'win32' ? ['cmd', ['/c', 'start', '', url]] : ['xdg-open', [url]];
+  spawn(command, args, { stdio: 'ignore', detached: true }).on('error', () => {}).unref();
 }
 
 function review(project: Project, id: string | undefined, verdict: string | undefined): void {
@@ -396,6 +407,14 @@ async function run(): Promise<void> {
         writeJsonAtomic(resolve(values.out), exported, 2);
         console.log(`${exported.flows.length} flows written to ${resolve(values.out)}`);
       }
+      return;
+    }
+    case 'ui': {
+      const port = values.port === undefined ? 0 : Number(values.port);
+      if (!Number.isInteger(port) || port < 0 || port > 65535) throw new FlowsError(`--port must be a port number, not "${values.port}"`);
+      const ui = await startUi(loadProject(root), port);
+      console.log(`review page: ${ui.url}  (Ctrl-C stops it)`);
+      openBrowser(ui.url);
       return;
     }
     case 'models list':

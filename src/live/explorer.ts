@@ -236,9 +236,12 @@ export async function explore(input: ExploreInput, deps: ExploreDeps): Promise<R
     }
     if (queue.length > 0) notes.push(`stopped at explorer.max_pages (${deps.config.max_pages}); ${queue.length} actions were not explored`);
 
+    // The page keeps polling until the browser closes, so the run keeps the requests made while exploring; a call
+    // recorded during the rating below would come out unrated.
+    const requests = recorder.requests.slice();
     await recorder.settled();
-    markPolling(recorder.requests);
-    await labelNoise(recorder.requests, deps.decider);
+    markPolling(requests);
+    await labelNoise(requests, deps.decider);
     return {
       schema_version: 0,
       id,
@@ -251,7 +254,7 @@ export async function explore(input: ExploreInput, deps: ExploreDeps): Promise<R
       browser: name,
       states,
       actions,
-      requests: recorder.requests,
+      requests,
       sockets: [...new Set(guard.sockets)],
       notes,
     };

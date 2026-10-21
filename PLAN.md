@@ -205,6 +205,14 @@ First release: Next.js 14 (App Router) frontend and Express 4 + TypeScript backe
 - Subflow nesting cap, confirmed 2026-10-20: 3, in config.
 - Flow store, decided 2026-10-20: generated flows are per-repo JSON files in the cache. At the start of Phase 5 (same day): no SQLite; human edits, added flows and feedback live as JSON in the repo's `.flows/`, and git history is the version history.
 - Phase 5, decided 2026-10-20: the canvas is React Flow (`@xyflow/react`, MIT). The exit's usability pass with 2-3 QA users happens once Flows runs on the user's app; until then Claude checks the exit itself on the test apps. Badges that need the live app (no stable selector, not observed, role not explored, "Walk this in the inspector") come with Phase 3.
+- Phase 3, decided 2026-10-20 with the approved design:
+  - **Browser:** the explorer drives an installed browser through `playwright-core` (Apache-2.0) and downloads none. It tries the configured browser, then Chrome, then Edge, then Playwright's own Chromium, so it runs on Mac, Windows and Linux.
+  - **Read-only, at the network:** every request other than GET, HEAD or OPTIONS is aborted and recorded, WebSockets never connect, and service workers are blocked. The one exception is the login submit with env credentials: only the request whose body carries the password gets through.
+  - **Inspector:** it blocks nothing, because the person drives.
+  - **Storage:** observed runs live in the deletable cache. People's decisions and the inspector's corrections (`match` rules) live in `.flows/`.
+  - **Matching:** a UI flow matches by its page and visible elements. Its calls are evidence when they were seen; they don't decide, because a Next.js server component makes some calls out of the browser's sight. An API flow matches by method and the most specific route pattern, and only an answer other than 404, 405 or 501 confirms it.
+  - **Explorer gate:** it rates a control as the source flows it matches, by the engine's own texts, and uses the live text only when nothing matches. The Decider data is Phase 4's, unchanged, plus a new `event-noise` task.
+  - **Exit:** chessu ran on the user's Mac (pnpm through npx, PostgreSQL 15 from Homebrew, its data in the cache). Claude wrote the answer key, `ground-truth/live/chessu.json`, from a browser walk before any explorer run.
 - Still open: whether to cut the Phase 7 drift monitor.
 - Hosted LLM check (left open when Phase 1 closed, 2026-10-19): the hosted path of the LLM gateway (Claude through the Anthropic SDK, or any OpenAI-compatible provider) is tested only against a fake server. A real call still needs a user's own API key; Phase 1 closed with the local model (Ollama `llama3.2:3b`) verified live.
 

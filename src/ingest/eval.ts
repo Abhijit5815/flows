@@ -1,7 +1,7 @@
 import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { GroundTruthSchema, type GroundTruth } from '../../ground-truth/schema.ts';
+import { GroundTruthSchema, type GroundTruth } from './keys.ts';
 import { addRepo, initProject } from '../config/project.ts';
 import type { Graph } from '../graph/schema.ts';
 import { ConfigError } from '../shared/errors.ts';

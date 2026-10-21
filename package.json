@@ -1,26 +1,40 @@
 {
   "name": "flows",
-  "version": "0.0.0",
+  "version": "0.1.0",
+  "description": "Find the user and API flows of an app from its source code and its live URL, review them on a local page, and export them as JSON.",
   "private": true,
   "type": "module",
   "engines": {
     "node": ">=24.12"
   },
+  "bin": {
+    "flows": "dist/cli/main.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "skill",
+    "examples",
+    "README.md"
+  ],
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "node --test \"src/**/*.test.ts\" \"ground-truth/**/*.test.ts\"",
+    "test": "node --test \"src/**/*.test.ts\" \"ground-truth/**/*.test.ts\" \"scripts/**/*.test.ts\"",
     "bench:latency": "node spikes/latency/bench.ts",
-    "flows": "node src/cli/main.ts"
+    "flows": "node src/cli/main.ts",
+    "build": "node scripts/build.ts",
+    "prepack": "npm run build"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.135.0",
     "@ast-grep/napi": "^0.51.0",
     "@huggingface/transformers": "^4.3.1",
-    "@xyflow/react": "^12.12.0",
-    "esbuild": "^0.28.2",
     "playwright-core": "^1.64.1",
-    "react": "^19.3.1",
-    "react-dom": "^19.3.1",
     "ts-morph": "^28.0.0",
     "zod": "^4.6.7"
   },
@@ -28,6 +42,10 @@
     "@types/node": "^24.19.2",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
+    "@xyflow/react": "^12.12.0",
+    "esbuild": "^0.28.2",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
     "typescript": "^7.0.2"
   }
 }

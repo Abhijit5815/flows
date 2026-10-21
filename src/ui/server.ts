@@ -4,7 +4,6 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import type { AddressInfo } from 'node:net';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { build } from 'esbuild';
 import { categories, type Project } from '../config/project.ts';
 import type { EmbeddingProvider } from '../embeddings/provider.ts';
 import { verdictsOf, type EngineDeps } from '../engine/engine.ts';
@@ -34,19 +33,16 @@ class HttpError extends Error {
   }
 }
 
-// The page's script and styles, bundled in memory at start so they always match the source.
+// How the page is bundled, here and by the package build (scripts/build.ts).
+export const PAGE_BUNDLE = { bundle: true, format: 'esm', jsx: 'automatic', target: 'es2022', logLevel: 'silent', define: { 'process.env.NODE_ENV': '"production"' } } as const;
+
+// The page's script and styles: from the package build when there is one (an installed Flows has no esbuild), else
+// bundled in memory at start, so a checkout always serves its source.
 async function bundle(): Promise<{ js: string; css: string }> {
-  const result = await build({
-    entryPoints: [fileURLToPath(new URL('./web/app.tsx', import.meta.url))],
-    bundle: true,
-    write: false,
-    outdir: 'ui',
-    format: 'esm',
-    jsx: 'automatic',
-    target: 'es2022',
-    logLevel: 'silent',
-    define: { 'process.env.NODE_ENV': '"production"' },
-  });
+  const built = new URL('./web/app.js', import.meta.url);
+  if (existsSync(built)) return { js: readFileSync(built, 'utf8'), css: readFileSync(new URL('./web/app.css', import.meta.url), 'utf8') };
+  const { build } = await import('esbuild');
+  const result = await build({ ...PAGE_BUNDLE, entryPoints: [fileURLToPath(new URL('./web/app.tsx', import.meta.url))], write: false, outdir: 'ui' });
   const output = (ending: string) => result.outputFiles.find((file) => file.path.endsWith(ending))?.text ?? '';
   return { js: output('.js'), css: output('.css') };
 }

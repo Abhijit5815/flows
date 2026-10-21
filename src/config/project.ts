@@ -180,10 +180,13 @@ export function setCategories(project: Project, list: readonly Category[]): Proj
   return updated;
 }
 
-// The project's own config wins, then FLOWS_HOME, then the per-user cache folder.
+// Where Flows keeps its cache when no project says otherwise: FLOWS_HOME, then the per-user cache folder.
+export const defaultStorageDir = (): string => process.env.FLOWS_HOME ?? join(homedir(), '.cache', 'flows');
+
+// The project's own config wins, then the default.
 export function storageDir(project: Project): string {
   if (project.config.storage_dir !== undefined) return resolve(project.root, project.config.storage_dir);
-  return process.env.FLOWS_HOME ?? join(homedir(), '.cache', 'flows');
+  return defaultStorageDir();
 }
 
 export const projectDataDir = (project: Project): string => join(storageDir(project), 'projects', project.config.id);

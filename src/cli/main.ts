@@ -4,14 +4,16 @@ import { basename, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { ADAPTERS, adapterFor } from '../adapters/registry.ts';
-import { addRepo, categories, findRepo, initProject, loadProject, LoginNameSchema, projectDataDir, setFramework, storageDir, threshold, type Project, type Repo } from '../config/project.ts';
+import { addRepo, categories, configFile, defaultStorageDir, findRepo, initProject, loadProject, LoginNameSchema, projectDataDir, setFramework, storageDir, threshold, type Project, type Repo } from '../config/project.ts';
 import { createDecider, createGrounding } from '../decider/create.ts';
 import { DeciderV1 } from '../decider/decider.ts';
 import { drift, evaluateTask, MIN_OVERRIDES } from '../decider/eval.ts';
 import { loadBuiltInTasks } from '../decider/task.ts';
-import { CATALOGUE } from '../embeddings/catalogue.ts';
+import { CATALOGUE, catalogueEntry } from '../embeddings/catalogue.ts';
 import { createEmbeddingProvider } from '../embeddings/create.ts';
-import { modelDir } from '../embeddings/download.ts';
+import { ensureModelFiles, modelDir } from '../embeddings/download.ts';
+import { NLI_MODEL } from '../decider/entailment.ts';
+import { launchBrowser } from '../live/browser.ts';
 import { refreshFlows, verdictsOf, type EngineDeps } from '../engine/engine.ts';
 import { exportFlows } from '../engine/export.ts';
 import { learnedExamples, withLearned } from '../engine/learning.ts';
@@ -45,6 +47,7 @@ import { JsonlTraceSink, MemoryTraceSink, readTrace, RUN, traceFile } from '../t
 import { startUi } from '../ui/server.ts';
 
 const USAGE = `usage: flows <command> [--project <dir>]
+  setup                                    download the models ahead of time (checksummed) and look for a browser
   init [--name <name>]                     create .flows/config.json in the project folder
   repo add <path> --role web|api           register a repo folder under a role
   repo list
@@ -223,6 +226,27 @@ const money = (value: number) => `$${value.toFixed(value < 0.01 ? 4 : 2)}`;
 function costLine(run: RunCost): string {
   const tokens = run.models.map((use) => `${use.model} ${use.calls} calls, ${use.input} in / ${use.output} out tokens${use.uncounted > 0 ? ` (${use.uncounted} without a count)` : ''}`).join('; ');
   return `${tokens}; ${run.cost === null ? 'cost unknown (set llm.price_per_mtok to price it)' : money(run.cost)}`;
+}
+
+// PLAN.md Phase 7 setup: download the models ahead of time (some coding assistants block the network in their
+// sandbox), checksummed, and say whether the explorer has a browser to drive. Works with or without a project.
+async function setup(): Promise<void> {
+  const project = existsSync(configFile(root)) ? loadProject(root) : undefined;
+  const models = join(project === undefined ? defaultStorageDir() : storageDir(project), 'models');
+  const embedder = project?.config.embedder ?? { provider: 'local' as const, model: 'bge-small-en-v1.5' };
+  if (embedder.provider === 'local') {
+    await ensureModelFiles(catalogueEntry(embedder.model), models, progress());
+    console.log(`embedding model ${embedder.model}: ready in ${models}`);
+  } else console.log('embedding model: a remote one is configured, nothing to download');
+  await ensureModelFiles(NLI_MODEL, models, progress());
+  console.log(`entailment model cross-encoder/nli-deberta-v3-xsmall: ready in ${models}`);
+  try {
+    const { browser, name } = await launchBrowser(project?.config.explorer.browser, true);
+    await browser.close();
+    console.log(`browser for "flows explore": ${name}`);
+  } catch (error) {
+    console.log(`browser for "flows explore": ${(error as Error).message} (only the live-app commands need one)`);
+  }
 }
 
 // PLAN.md Phase 7: tokens and cost per run, from the trace.
@@ -513,6 +537,8 @@ async function run(): Promise<void> {
   const [command, sub, ...rest] = positionals;
   if (command === 'rule') return rule(loadProject(root), sub, rest);
   switch (`${command ?? ''} ${command === 'repo' || command === 'models' || command === 'stack' ? (sub ?? '') : ''}`.trim()) {
+    case 'setup':
+      return await setup();
     case 'init': {
       const project = initProject(root, values.name ?? basename(root));
       console.log(`created ${join(root, '.flows', 'config.json')} (project ${project.config.id})`);

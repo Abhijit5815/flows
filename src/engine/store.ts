@@ -19,6 +19,8 @@ export const FlowSetSchema = z.object({
   // Phase 3: the live runs the cross-check used, and each source guard (role) with whether a run got past it.
   runs: z.array(z.string()).default([]),
   roles: z.array(z.object({ guard: z.string(), node: z.string(), covered: z.boolean() })).default([]),
+  // Phase 7: flows the last scan had and this one doesn't, because the code changed.
+  gone: z.array(z.object({ id: z.string(), name: z.string(), reason: z.string() })).default([]),
 });
 
 export type FlowSet = z.infer<typeof FlowSetSchema>;

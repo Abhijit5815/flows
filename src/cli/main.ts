@@ -18,6 +18,7 @@ import { learnedExamples, withLearned } from '../engine/learning.ts';
 import { OptionalLlm } from '../engine/llm.ts';
 import { loadFlows, type FlowSet } from '../engine/store.ts';
 import { stepLine } from '../engine/views.ts';
+import { STALE } from '../model/tags.ts';
 import type { Graph } from '../graph/schema.ts';
 import { loadGraph, repoFile } from '../graph/store.ts';
 import { stackOf } from '../ingest/detect.ts';
@@ -206,6 +207,8 @@ async function scanAll(project: Project): Promise<void> {
     const set = await refreshFlows(project, repo, graph, engine);
     console.log(flowSummary(set));
     for (const note of set.notes) console.log(`    ${note}`);
+    for (const flow of set.flows.filter((candidate) => candidate.tags.includes(STALE))) console.log(`  stale: ${flow.id}  ${flow.name}: ${(set.reasons[flow.id] ?? []).filter((reason) => reason.startsWith('stale')).join('; ')}`);
+    for (const flow of set.gone) console.log(`  gone: ${flow.id}  ${flow.name}: ${flow.reason}`);
   }
   if (engine.llm.pending > 0) console.log(`${engine.llm.pending} AI job(s) wait for your coding assistant: run "flows jobs", answer them, then scan again`);
 }

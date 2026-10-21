@@ -18,7 +18,8 @@ import { judge, judgeObserved, type Verdict } from './judge.ts';
 import type { OptionalLlm } from './llm.ts';
 import { proposeName } from './name.ts';
 import { reachability, unreachableBecause } from './reach.ts';
-import { saveFlows, type FlowSet } from './store.ts';
+import { loadFlows, saveFlows, type FlowSet } from './store.ts';
+import { markStale } from './stale.ts';
 import { addLoginSubflows } from './subflows.ts';
 import { verifyFlows, type Human, type Verified } from './verify.ts';
 
@@ -72,7 +73,7 @@ export async function buildFlows(graph: Graph, human: HumanInput, deps: EngineDe
   const index = live === undefined ? undefined : indexOf(graph);
   const roles = index === undefined || live === undefined ? [] : rolesOf(index, live.seen);
   const used = new Set<string>(); // observed flows a source flow matched
-  const set: FlowSet = { flows: [], reasons: {}, rejected: [], decisions: {}, unreachable: reach.unreachable, notes: generated.notes, runs: live?.runs.map((run) => run.id) ?? [], roles };
+  const set: FlowSet = { flows: [], reasons: {}, rejected: [], decisions: {}, unreachable: reach.unreachable, notes: generated.notes, runs: live?.runs.map((run) => run.id) ?? [], roles, gone: [] };
   for (const skip of found.skipped) {
     if (skip.flow !== undefined && addedIds.has(skip.flow.id)) continue; // a person promoted it
     set.rejected.push({ subject: skip.node, name: skip.name, reasons: [skip.reason], ...(skip.flow === undefined ? {} : { flow: skip.flow }) });
@@ -169,7 +170,10 @@ export async function buildFlows(graph: Graph, human: HumanInput, deps: EngineDe
 // for `flows show` and the review page.
 export async function refreshFlows(project: Project, repo: Repo, graph: Graph, deps: EngineDeps): Promise<FlowSet> {
   const dir = resolve(project.root, repo.path);
-  const set = await buildFlows(graph, { verdicts: verdictsOf(loadRules(dir)), edits: loadEdits(dir) }, deps, liveFor(project, repo));
+  const edits = loadEdits(dir);
+  const verdicts = verdictsOf(loadRules(dir));
+  const set = await buildFlows(graph, { verdicts, edits }, deps, liveFor(project, repo));
+  markStale(set, graph, loadFlows(project, repo), edits, new Set([...Object.keys(edits.overrides), ...verdicts.keys()]));
   saveFlows(project, repo, set);
   return set;
 }

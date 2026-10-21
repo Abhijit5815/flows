@@ -6,7 +6,7 @@ import { calibrationHalf, loadBuiltInTasks, TaskSchema, testHalf, type Task } fr
 const tasks = loadBuiltInTasks();
 
 test('the built-in decision types load and validate', () => {
-  assert.deepEqual(tasks.map((task) => task.task), ['destructive-risk', 'flow-category']);
+  assert.deepEqual(tasks.map((task) => task.task), ['destructive-risk', 'event-noise', 'flow-category']);
 });
 
 test('flow-category labels are exactly the editable default categories', () => {

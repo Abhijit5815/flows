@@ -1,0 +1,148 @@
+{
+  "task": "event-noise",
+  "description": "Is this request a page made noise (health checks, telemetry, analytics, error reporting, feature flags, browser housekeeping) or one of the app's real calls (reading or changing its data, signing in or out)? noise if a user would never think of it as part of what they did.",
+  "labels": [
+    "noise",
+    "relevant"
+  ],
+  "rules": [
+    {
+      "pattern": "^\\S+ (/api)?(/v\\d+)?/(health|healthz|healthcheck|ping|metrics|heartbeat|livez|readyz)$",
+      "label": "noise"
+    },
+    {
+      "pattern": "^\\S+ /(favicon\\.ico|robots\\.txt|sitemap\\.xml|browserconfig\\.xml|apple-touch-icon\\S*)$",
+      "label": "noise"
+    },
+    {
+      "pattern": "^(POST|PUT) .*/(track|collect|telemetry|beacon|rum|vitals|csp-report)(/|$)",
+      "label": "noise"
+    }
+  ],
+  "examples": {
+    "noise": [
+      "POST /api/client-errors",
+      "POST /monitoring",
+      "POST /api/monitoring/envelope",
+      "GET /api/feature-flags",
+      "POST /api/web-vitals",
+      "POST /ingest",
+      "POST /api/logs",
+      "POST /api/analytics/pageview",
+      "GET /__health",
+      "POST /api/errors/report"
+    ],
+    "relevant": [
+      "GET /api/v1/products",
+      "GET /v1/games",
+      "POST /api/cart/items",
+      "GET /api/v1/orders/:orderId",
+      "PATCH /api/me",
+      "GET /v1/users/:name",
+      "POST /v1/auth/login",
+      "GET /users",
+      "DELETE /api/v1/orders/:orderId",
+      "POST /signup",
+      "GET /api/v1/admin/stats",
+      "PUT /users/:id(\\d+)"
+    ]
+  },
+  "labelled": [
+    {
+      "text": "GET /api/products",
+      "label": "relevant"
+    },
+    {
+      "text": "POST /api/track",
+      "label": "noise"
+    },
+    {
+      "text": "GET /health",
+      "label": "noise"
+    },
+    {
+      "text": "GET /api/products/:id",
+      "label": "relevant"
+    },
+    {
+      "text": "GET /api/cart",
+      "label": "relevant"
+    },
+    {
+      "text": "GET /favicon.ico",
+      "label": "noise"
+    },
+    {
+      "text": "GET /api/orders",
+      "label": "relevant"
+    },
+    {
+      "text": "GET /api/v1/users/me",
+      "label": "relevant"
+    },
+    {
+      "text": "GET /v1/auth",
+      "label": "relevant"
+    },
+    {
+      "text": "GET /v1/games/:code",
+      "label": "relevant"
+    },
+    {
+      "text": "POST /v1/games",
+      "label": "relevant"
+    },
+    {
+      "text": "PATCH /v1/auth",
+      "label": "relevant"
+    },
+    {
+      "text": "POST /api/auth/login",
+      "label": "relevant"
+    },
+    {
+      "text": "POST /v1/auth/register",
+      "label": "relevant"
+    },
+    {
+      "text": "GET /api/v1/orders",
+      "label": "relevant"
+    },
+    {
+      "text": "POST /api/v1/orders",
+      "label": "relevant"
+    },
+    {
+      "text": "GET /users/:id(\\d+)",
+      "label": "relevant"
+    },
+    {
+      "text": "POST /users",
+      "label": "relevant"
+    },
+    {
+      "text": "GET /api/v1/reviews",
+      "label": "relevant"
+    },
+    {
+      "text": "POST /v1/auth/guest",
+      "label": "relevant"
+    },
+    {
+      "text": "DELETE /api/orders/:orderId",
+      "label": "relevant"
+    },
+    {
+      "text": "GET /api/v1/users/:id",
+      "label": "relevant"
+    },
+    {
+      "text": "POST /logout",
+      "label": "relevant"
+    },
+    {
+      "text": "POST /api/auth/logout",
+      "label": "relevant"
+    }
+  ]
+}

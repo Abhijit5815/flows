@@ -16,9 +16,10 @@ import { repoFile } from '../graph/store.ts';
 import { listFiles } from '../ingest/files.ts';
 import { loadRules } from '../rules/learned.ts';
 import { parseOrThrow } from '../shared/validate.ts';
-import { TOKEN_HEADER, type ProjectView, type Snippet } from './api.ts';
+import { walkInInspector } from '../live/walk.ts';
+import { TOKEN_HEADER, type InspectorView, type ProjectView, type Snippet } from './api.ts';
 import { describeFlow, palette } from './propose.ts';
-import { BadRequest, DescribeBody, writes } from './writes.ts';
+import { BadRequest, DescribeBody, InspectBody, writes } from './writes.ts';
 
 const CONTEXT_LINES = 6; // shown above and below a cited line
 const MAX_BODY = 1 << 20;
@@ -156,6 +157,21 @@ export async function startUi(start: Project, deps: EngineDeps & { embedder: Emb
     return json(res, 200, item);
   };
 
+  // One inspector at a time (PLAN.md Phase 3). It opens a browser window for the person; the walk can take as long as
+  // they like, and only saving it goes through the write queue.
+  let inspector: InspectorView = { running: false, last: null };
+  const startInspector = (body: unknown): InspectorView => {
+    if (inspector.running) throw new HttpError(409, 'the inspector is already open; press Done in its window first');
+    const { repo: key, flow: id } = parseOrThrow(InspectBody, body, 'inspector request', BadRequest);
+    const flow = key === undefined || id === undefined ? undefined : { repo: changes.graphOf(key).repo, id };
+    inspector = { running: true, last: inspector.last };
+    walkInInspector(project, { flow }, deps, () => undefined, serial).then(
+      (walk) => (inspector = { running: false, last: { flow: id ?? null, ticked: walk.ticked.length, steps: walk.steps, error: null } }),
+      (error: Error) => (inspector = { running: false, last: { flow: id ?? null, ticked: 0, steps: 0, error: error.message } }),
+    );
+    return inspector;
+  };
+
   const handle = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     if (!hosts.has(req.headers.host ?? '')) throw new HttpError(403, 'unknown host');
     const url = new URL(req.url ?? '/', `http://${req.headers.host}`);
@@ -167,6 +183,8 @@ export async function startUi(start: Project, deps: EngineDeps & { embedder: Emb
     if (req.method === 'GET' && url.pathname === '/api/project') return json(res, 200, view());
     if (req.method === 'GET' && url.pathname === '/api/snippet') return json(res, 200, snippet(url.searchParams));
     if (req.method === 'GET' && url.pathname === '/api/observed') return observed(res, url.searchParams.get('ref') ?? '');
+    if (req.method === 'GET' && url.pathname === '/api/inspect') return json(res, 200, inspector);
+    if (req.method === 'POST' && url.pathname === '/api/inspect') return json(res, 202, startInspector(await body(req)));
     if (req.method === 'GET' && url.pathname === '/api/export') return json(res, 200, exportFlows(project.config.repos.flatMap((repo) => loadFlows(project, repo) ?? []), categories(project.config)));
     if (req.method === 'GET' && url.pathname === '/api/nodes') return json(res, 200, palette(changes.graphOf(url.searchParams.get('repo') ?? '').graph));
     if (req.method === 'POST' && url.pathname === '/api/describe') {

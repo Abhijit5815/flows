@@ -12,10 +12,10 @@ import { buildFlows } from '../engine/engine.ts';
 import { OptionalLlm } from '../engine/llm.ts';
 import { saveFlows } from '../engine/store.ts';
 import { scanRepo } from '../ingest/pipeline.ts';
-import { runDir, saveRun, type Run } from '../live/run.ts';
+import { observedDir, runDir, saveRun, type Run } from '../live/run.ts';
 import { tempProject } from '../shared/testing/project.ts';
 import { MemoryTraceSink } from '../trace/sink.ts';
-import { TOKEN_HEADER, type ProjectView, type Snippet } from './api.ts';
+import { TOKEN_HEADER, type InspectorView, type ProjectView, type Snippet } from './api.ts';
 import { startUi, type Ui } from './server.ts';
 
 const tmp = mkdtempSync(join(tmpdir(), 'flows-ui-'));
@@ -177,4 +177,17 @@ test('observed evidence comes from the run index by id: a request as JSON, a scr
   assert.equal((await at(`${id}#r0.jpg`)).status, 400);
   assert.equal((await at('explorer-gone#s0')).status, 404);
   assert.equal((await at(`${id}#r9`)).status, 404);
+});
+
+test('the inspector route: a bad request is refused, and a walk with nowhere to go ends with the reason', async () => {
+  const post = (body: unknown) => fetch(new URL('/api/inspect', ui.url), { method: 'POST', headers: { [TOKEN_HEADER]: token, 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  assert.equal((await post({ repo: 'web:next-basic' })).status, 400, 'a repo needs a flow');
+  assert.deepEqual(await (await api('/api/inspect')).json(), { running: false, last: null });
+  // With no live run there is no URL to open, so the walk stops before any browser starts (an earlier test saved one).
+  rmSync(observedDir(project), { recursive: true, force: true });
+  assert.equal((await post({})).status, 202);
+  let view: InspectorView;
+  do view = (await (await api('/api/inspect')).json()) as InspectorView;
+  while (view.running);
+  assert.match(view.last?.error ?? '', /no URL to open/);
 });

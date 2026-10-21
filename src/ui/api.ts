@@ -14,3 +14,6 @@ export type ProjectView = { name: string; categories: Category[]; repos: RepoVie
 export type Snippet = { file: string; line: number; start: number; lines: string[] };
 
 export const TOKEN_HEADER = 'x-flows-token';
+
+// The inspector the page started ("Walk this in the inspector"): whether it is still open, and how the last walk went.
+export type InspectorView = { running: boolean; last: { flow: string | null; ticked: number; steps: number; error: string | null } | null };

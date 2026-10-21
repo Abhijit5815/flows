@@ -28,6 +28,8 @@ export const BulkBody = z.object({
 });
 export const DrawBody = z.object({ repo: RepoKey, nodes: z.array(z.string().min(1)).min(1).max(50), name: z.string().trim().min(1).max(200) });
 export const DescribeBody = z.object({ repo: RepoKey, text: z.string().trim().min(3).max(500) });
+// "Walk this in the inspector": a flow to walk, or nothing for a free walk (a role no run has covered).
+export const InspectBody = z.object({ repo: RepoKey.optional(), flow: z.string().min(1).max(200).optional() }).refine((walk) => (walk.repo === undefined) === (walk.flow === undefined), { message: 'give both repo and flow, or neither' });
 export const CategoriesBody = z.object({ categories: z.array(CategorySchema).min(1), merges: z.array(z.object({ from: z.string().min(1), to: z.string().min(1) })).default([]) });
 
 // A request the page sent that can't be carried out as asked; the server answers 400 with the message.

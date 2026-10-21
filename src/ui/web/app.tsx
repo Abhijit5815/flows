@@ -9,6 +9,7 @@ import { Bulk } from './bulk.tsx';
 import { Canvas } from './canvas.tsx';
 import { CategoryEditor } from './categories.tsx';
 import { get } from './client.ts';
+import { InspectorStatus, useInspector, WalkButton } from './inspect.tsx';
 import { hidden, itemsOf, matches, NO_FILTERS, repoKey, type Filters } from './model.ts';
 import { Panel } from './panel.tsx';
 import { RejectedList } from './rejected.tsx';
@@ -34,6 +35,7 @@ function App() {
   const promoting = useSend((view) => setProject(view));
 
   const load = useCallback(() => get<ProjectView>('/api/project').then(setProject, (failure: Error) => setError(failure.message)), []);
+  const inspector = useInspector(load);
   useEffect(() => {
     load();
   }, [load]);
@@ -98,9 +100,13 @@ function App() {
         <Bulk items={shown} categories={project.categories} onView={setProject} />
         {unexplored.length > 0 ? (
           <p className="roles" role="note">
-            Roles not explored: {unexplored.join(', ')}. No live run got past these guards, so their flows can't be confirmed yet.
+            Roles not explored: {unexplored.join(', ')}. No live run got past these guards, so their flows can't be confirmed yet.{' '}
+            <button type="button" disabled={inspector.running} onClick={() => inspector.start({})}>
+              Walk it in the inspector
+            </button>
           </p>
         ) : null}
+        <InspectorStatus inspector={inspector} />
       </header>
       <main className={`workspace${(side === 'flow' && current !== undefined) || side !== 'flow' ? ' with-panel' : ''}`}>
         <div className="canvas">
@@ -124,6 +130,7 @@ function App() {
         {side === 'categories' ? <CategoryEditor project={project} onView={setProject} onClose={() => setSide('flow')} /> : null}
         {side === 'flow' && current !== undefined ? (
           <Panel item={current} onClose={() => setSelected(undefined)}>
+            <WalkButton item={current} inspector={inspector} />
             <Review item={current} onView={setProject} />
             <Edit item={current} categories={project.categories} users={dependentsOf(current, items)} onView={setProject} />
             <Subflows item={current} items={items} onView={setProject} />

@@ -27,6 +27,7 @@ import { envCredentials, loginByHand, sessionFile } from '../live/login.ts';
 import { crossCheckLines, runLines } from '../live/report.ts';
 import { runDir, saveRun } from '../live/run.ts';
 import { sourceTexts } from '../live/texts.ts';
+import { walkInInspector } from '../live/walk.ts';
 import { answerJob, loadJobs } from '../llm/assistant.ts';
 import { createGateway } from '../llm/create.ts';
 import { draftRule } from '../rules/draft.ts';
@@ -59,6 +60,9 @@ const USAGE = `usage: flows <command> [--project <dir>]
                                            "flows login" or the env credentials in explorer.logins.<name>
   login <url> --as <name>                  log in by hand in a browser window; the session is kept, locally, for
                                            "flows explore --as <name>"
+  inspect [<url>] [--as <name>] [--flow <id>]   use the app by hand in a browser window (the inspector: nothing is
+                                           blocked, what you do is recorded and cross-checked); point at anything
+                                           to see what source knows; --flow walks one flow, ticking its steps
   export [--out <file>]                    the reviewed flows as JSON for a test tool: every enabled flow in an
                                            enabled category, with the subflows they use
   jobs [--json]                            with "llm": {"provider": "assistant"}: the AI jobs waiting for your
@@ -95,6 +99,7 @@ const { values, positionals } = parseArgs({
     out: { type: 'string' },
     as: { type: 'string' },
     headed: { type: 'boolean', default: false },
+    flow: { type: 'string' },
   },
 });
 
@@ -261,14 +266,20 @@ function openBrowser(url: string): void {
   spawn(command, args, { stdio: 'ignore', detached: true }).on('error', () => {}).unref();
 }
 
-function review(project: Project, id: string | undefined, verdict: string | undefined): void {
-  if (id === undefined || (verdict !== 'correct' && verdict !== 'wrong' && verdict !== 'never')) throw new FlowsError('usage: flows review <flow-id> correct|wrong|never [--comment <text>]');
-  // Ids come from node ids, so two repos of the same role can share one ("Open /"); --repo picks the repo.
+// The repo whose last scan has this flow. Ids come from node ids, so two repos of the same role can share one
+// ("Open /"); --repo picks the repo.
+function ownerOf(project: Project, id: string): Repo {
   const repos = values.repo === undefined ? project.config.repos : [findRepo(project, values.repo, values.role)];
   const owners = repos.filter((repo) => loadFlows(project, repo)?.flows.some((flow) => flow.id === id));
   if (owners.length !== 1) {
     throw new FlowsError(owners.length === 0 ? `no flow ${id} in the last scan; see "flows show flows"` : `${id} is in ${owners.map((repo) => repo.path).join(' and ')}; add --repo <path>`);
   }
+  return owners[0];
+}
+
+function review(project: Project, id: string | undefined, verdict: string | undefined): void {
+  if (id === undefined || (verdict !== 'correct' && verdict !== 'wrong' && verdict !== 'never')) throw new FlowsError('usage: flows review <flow-id> correct|wrong|never [--comment <text>]');
+  const owners = [ownerOf(project, id)];
   const dir = resolve(project.root, owners[0].path);
   addRule(dir, { type: 'feedback', flow: id, kind: verdict, ...(values.comment === undefined ? {} : { comment: values.comment }), added: today() });
   console.log(`${id} marked ${verdict} in ${rulesFile(dir)}; run "flows scan" to apply it`);
@@ -508,6 +519,19 @@ async function run(): Promise<void> {
         process.stdin.pause();
       });
       console.log(`saved the session "${name}" in Flows' cache (never in .flows/); "flows explore ${sub} --as ${name}" uses it`);
+      return;
+    }
+    case 'inspect': {
+      const project = loadProject(root);
+      const flow = values.flow === undefined ? undefined : { repo: ownerOf(project, values.flow), id: values.flow };
+      const embedder = createEmbeddingProvider(project.config.embedder, join(storageDir(project), 'models'), progress());
+      const result = await walkInInspector(project, { url: sub, as: loginName(), flow }, engineDeps(project, embedder), (line) => console.log(line));
+      for (const line of runLines(result.run)) console.log(line);
+      if (flow !== undefined) console.log(`  ticked ${result.ticked.length} of ${result.steps} steps of ${flow.id}`);
+      for (const { repo, set } of result.sets) {
+        console.log(`${repo.role}  ${repo.path}`);
+        for (const line of crossCheckLines(set)) console.log(line);
+      }
       return;
     }
     case 'jobs':

@@ -1,0 +1,63 @@
+{
+  "app": "chessu",
+  "url": "http://localhost:3000",
+  "signed_in": true,
+  "written": "2026-10-20",
+  "flows": [
+    { "id": "home-signed-out", "kind": "ui", "page": "/", "action": "open", "element": "Public games", "signed_in": false },
+    { "id": "guest-sign-in", "kind": "ui", "page": "/", "action": "submit", "element": "guestName", "request": "POST /v1/auth/guest", "signed_in": false },
+    { "id": "login", "kind": "ui", "page": "/", "action": "submit", "element": "loginName, loginPassword", "request": "POST /v1/auth/login", "signed_in": false },
+    { "id": "register", "kind": "ui", "page": "/", "action": "submit", "element": "registerName, registerEmail, registerPassword", "request": "POST /v1/auth/register", "signed_in": false },
+    { "id": "game-signed-out", "kind": "ui", "page": "/[code]", "action": "open", "element": "Waiting for authentication...", "signed_in": false },
+    { "id": "profile-signed-out", "kind": "ui", "page": "/user/[name]", "action": "open", "element": "Recent games", "signed_in": false },
+    { "id": "archive-signed-out", "kind": "ui", "page": "/archive/[id]", "action": "open", "element": "Archived link:", "signed_in": false },
+    { "id": "settings-signed-out", "kind": "ui", "page": "/settings", "action": "open", "element": "redirects to /", "signed_in": false },
+
+    { "id": "home", "kind": "ui", "page": "/", "action": "open", "element": "Public games" },
+    { "id": "refresh-public-games", "kind": "ui", "page": "/", "action": "click", "element": "Refresh public games" },
+    { "id": "join-public-game", "kind": "ui", "page": "/", "action": "click", "element": "Join" },
+    { "id": "join-from-invite", "kind": "ui", "page": "/", "action": "submit", "element": "joinGameCode", "request": "GET /v1/games/[code]" },
+    { "id": "create-game", "kind": "ui", "page": "/", "action": "submit", "element": "createUnlisted, createStartingSide", "request": "POST /v1/games" },
+    { "id": "user-menu", "kind": "ui", "page": "/", "action": "click", "element": "user icon (header)" },
+    { "id": "view-profile", "kind": "ui", "page": "/", "action": "click", "element": "View profile" },
+    { "id": "account-settings", "kind": "ui", "page": "/", "action": "click", "element": "Account settings" },
+    { "id": "logout", "kind": "ui", "page": "/", "action": "click", "element": "Logout", "request": "POST /v1/auth/logout" },
+    { "id": "toggle-theme", "kind": "ui", "page": "/", "action": "click", "element": "Toggle theme" },
+    { "id": "logo-home", "kind": "ui", "page": "/", "action": "click", "element": "chessu" },
+
+    { "id": "game", "kind": "ui", "page": "/[code]", "action": "open", "element": "Invite friends:", "request": "GET /socket.io/" },
+    { "id": "take-empty-seat", "kind": "ui", "page": "/[code]", "action": "click", "element": "Play as black" },
+    { "id": "move-piece", "kind": "ui", "page": "/[code]", "action": "click", "element": "board square (a piece, then its target square; dragging also works)" },
+    { "id": "game-chat", "kind": "ui", "page": "/[code]", "action": "submit", "element": "chatInput" },
+    { "id": "copy-invite-link", "kind": "ui", "page": "/[code]", "action": "click", "element": "ches.su/[code]" },
+    { "id": "game-move-history", "kind": "ui", "page": "/[code]", "action": "click", "element": "move history buttons (first, previous, next, last)" },
+    { "id": "game-player-profile", "kind": "ui", "page": "/[code]", "action": "click", "element": "[player name]" },
+    { "id": "game-over-archive", "kind": "ui", "page": "/[code]", "action": "click", "element": "ches.su/archive/[id]" },
+
+    { "id": "profile", "kind": "ui", "page": "/user/[name]", "action": "open", "element": "Recent games" },
+    { "id": "review-game", "kind": "ui", "page": "/user/[name]", "action": "click", "element": "Review game" },
+    { "id": "copy-profile-link", "kind": "ui", "page": "/user/[name]", "action": "click", "element": "ches.su/user/[name]" },
+
+    { "id": "archive", "kind": "ui", "page": "/archive/[id]", "action": "open", "element": "Archived link:" },
+    { "id": "flip-board", "kind": "ui", "page": "/archive/[id]", "action": "click", "element": "Flip board" },
+    { "id": "archive-move-history", "kind": "ui", "page": "/archive/[id]", "action": "click", "element": "move history buttons (first, previous, next, last)" },
+    { "id": "copy-final-pgn", "kind": "ui", "page": "/archive/[id]", "action": "click", "element": "Final PGN" },
+    { "id": "copy-current-fen", "kind": "ui", "page": "/archive/[id]", "action": "click", "element": "Current FEN" },
+    { "id": "copy-archive-link", "kind": "ui", "page": "/archive/[id]", "action": "click", "element": "ches.su/archive/[id]" },
+    { "id": "archive-player-profile", "kind": "ui", "page": "/archive/[id]", "action": "click", "element": "[player name]" },
+
+    { "id": "settings", "kind": "ui", "page": "/settings", "action": "open", "element": "Account settings" },
+    { "id": "update-account", "kind": "ui", "page": "/settings", "action": "submit", "element": "updateUsername, updateEmail, updatePassword", "request": "PATCH /v1/auth/" },
+
+    { "id": "api-session", "kind": "api", "page": "/", "action": "open", "element": "(every page load)", "request": "GET /v1/auth" },
+    { "id": "api-guest", "kind": "api", "page": "/", "action": "submit", "element": "guestName", "request": "POST /v1/auth/guest", "signed_in": false },
+    { "id": "api-login", "kind": "api", "page": "/", "action": "submit", "element": "loginName, loginPassword", "request": "POST /v1/auth/login", "signed_in": false },
+    { "id": "api-register", "kind": "api", "page": "/", "action": "submit", "element": "registerName, registerEmail, registerPassword", "request": "POST /v1/auth/register", "signed_in": false },
+    { "id": "api-logout", "kind": "api", "page": "/", "action": "click", "element": "Logout", "request": "POST /v1/auth/logout" },
+    { "id": "api-find-game", "kind": "api", "page": "/", "action": "submit", "element": "joinGameCode", "request": "GET /v1/games/[code]" },
+    { "id": "api-create-game", "kind": "api", "page": "/", "action": "submit", "element": "createUnlisted, createStartingSide", "request": "POST /v1/games" },
+    { "id": "api-update-account", "kind": "api", "page": "/settings", "action": "submit", "element": "updateUsername, updateEmail, updatePassword", "request": "PATCH /v1/auth/" },
+    { "id": "api-socket-poll", "kind": "api", "page": "/[code]", "action": "open", "element": "(page load)", "request": "GET /socket.io/" },
+    { "id": "api-socket-send", "kind": "api", "page": "/[code]", "action": "open", "element": "(page load)", "request": "POST /socket.io/" }
+  ]
+}

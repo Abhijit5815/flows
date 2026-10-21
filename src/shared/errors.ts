@@ -27,3 +27,6 @@ export class DeciderError extends FlowsError {}
 
 // An LLM request that waits for the coding assistant to answer it (`flows jobs`, `flows answer`).
 export class PendingAnswer extends FlowsError {}
+
+// The live app couldn't be explored or inspected: no browser, a failed login, a session that ended mid-run.
+export class LiveError extends FlowsError {}

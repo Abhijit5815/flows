@@ -4,7 +4,7 @@ import { basename, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { ADAPTERS, adapterFor } from '../adapters/registry.ts';
-import { addRepo, categories, findRepo, initProject, loadProject, projectDataDir, setFramework, storageDir, type Project, type Repo } from '../config/project.ts';
+import { addRepo, categories, findRepo, initProject, loadProject, LoginNameSchema, projectDataDir, setFramework, storageDir, type Project, type Repo } from '../config/project.ts';
 import { createDecider, createGrounding } from '../decider/create.ts';
 import { loadBuiltInTasks } from '../decider/task.ts';
 import { CATALOGUE } from '../embeddings/catalogue.ts';
@@ -22,6 +22,11 @@ import { evaluate, loadKeys, type Score } from '../ingest/eval.ts';
 import { listFiles } from '../ingest/files.ts';
 import { isSource } from '../ingest/match.ts';
 import { CoverageSchema, scanRepo } from '../ingest/pipeline.ts';
+import { explore } from '../live/explorer.ts';
+import { envCredentials, loginByHand, sessionFile } from '../live/login.ts';
+import { crossCheckLines, runLines } from '../live/report.ts';
+import { runDir, saveRun } from '../live/run.ts';
+import { sourceTexts } from '../live/texts.ts';
 import { answerJob, loadJobs } from '../llm/assistant.ts';
 import { createGateway } from '../llm/create.ts';
 import { draftRule } from '../rules/draft.ts';
@@ -42,12 +47,18 @@ const USAGE = `usage: flows <command> [--project <dir>]
   scan                                     build each repo's graph (files are parsed again only when they change),
                                            then its flows
   show <kind> [--json]                     what the last scan found: routes, pages, handlers, guards, ... missed,
-                                           or flows, rejected (with reasons) and unreachable (code no entry reaches)
+                                           or flows, rejected (with reasons) and unreachable (code no entry reaches),
+                                           or crosscheck (what the live runs confirmed, missed and added)
   ui [--port <n>]                          the review page: the flows on a canvas with their evidence (a local web
                                            page; Ctrl-C stops it)
   review <flow-id> correct|wrong|never [--comment <text>] [--repo <path>]   a reviewer's verdict (never: don't
                                            suggest it again), kept in the repo's rules; the next scan applies it
                                            (--repo when two repos have that id)
+  explore <url> [--as <name>] [--headed]   explore the live app read-only (writes never reach it), then cross-check
+                                           its flows with source; --as signs in with the saved session of
+                                           "flows login" or the env credentials in explorer.logins.<name>
+  login <url> --as <name>                  log in by hand in a browser window; the session is kept, locally, for
+                                           "flows explore --as <name>"
   export [--out <file>]                    the reviewed flows as JSON for a test tool: every enabled flow in an
                                            enabled category, with the subflows they use
   jobs [--json]                            with "llm": {"provider": "assistant"}: the AI jobs waiting for your
@@ -82,6 +93,8 @@ const { values, positionals } = parseArgs({
     repo: { type: 'string' },
     port: { type: 'string' },
     out: { type: 'string' },
+    as: { type: 'string' },
+    headed: { type: 'boolean', default: false },
   },
 });
 
@@ -157,7 +170,8 @@ function engineDeps(project: Project, embedder: ReturnType<typeof createEmbeddin
 function flowSummary(set: FlowSet): string {
   const count = (status: string) => set.flows.filter((flow) => flow.status === status).length;
   const held = set.flows.filter((flow) => flow.destructive !== 'no' && !flow.enabled && flow.status !== 'rejected').length;
-  return `  flows: ${set.flows.length} (${['verified', 'unverified', 'unreachable', 'rejected'].map((status) => `${count(status)} ${status}`).join(', ')}), ${set.rejected.length} candidates rejected, ${held} held for review (destructive or unsure); see "flows show flows"`;
+  const statuses = [...(set.runs.length > 0 ? ['confirmed', 'observed-only'] : []), 'verified', 'unverified', 'unreachable', 'rejected'];
+  return `  flows: ${set.flows.length} (${statuses.map((status) => `${count(status)} ${status}`).join(', ')}), ${set.rejected.length} candidates rejected, ${held} held for review (destructive or unsure); see "flows show flows"`;
 }
 
 async function scanAll(project: Project): Promise<void> {
@@ -277,7 +291,56 @@ function describe(graph: Graph, node: Graph['nodes'][number]): string {
   return `${node.id}  ${node.file}:${node.line}${extra}`;
 }
 
+function showCrossCheck(project: Project): void {
+  for (const repo of project.config.repos) {
+    const set = loadFlows(project, repo);
+    console.log(`${repo.role}  ${repo.path}`);
+    for (const line of set === undefined ? ['  no flows yet; run "flows scan"'] : crossCheckLines(set)) console.log(line);
+  }
+}
+
+// The login a run signs in as: --as names it, and it must have a saved session or env credentials.
+function loginName(): string | undefined {
+  if (values.as === undefined) return undefined;
+  const parsed = LoginNameSchema.safeParse(values.as);
+  if (!parsed.success) throw new FlowsError(`--as "${values.as}": ${parsed.error.issues[0]?.message ?? 'not a login name'}`);
+  return parsed.data;
+}
+
+// `flows explore`: one read-only run, kept in the cache, then every scanned repo's flows again with the cross-check.
+async function exploreLive(project: Project, url: string): Promise<void> {
+  const name = loginName();
+  const credentials = name === undefined ? undefined : envCredentials(project.config.explorer, name);
+  const saved = name === undefined ? undefined : sessionFile(project, name);
+  const storageState = credentials === undefined && saved !== undefined && existsSync(saved) ? saved : undefined;
+  if (name !== undefined && credentials === undefined && storageState === undefined) {
+    throw new FlowsError(`no saved session or env credentials for "${name}": run "flows login ${url} --as ${name}", or set explorer.logins.${name} in the config`);
+  }
+  const graphs = project.config.repos.flatMap((repo) => {
+    const graph = loadGraph(project, repo);
+    return graph === undefined ? [] : [{ repo, graph }];
+  });
+  if (graphs.length === 0) console.log('no repo is scanned yet: pages are grouped by guessed ids, and nothing is cross-checked; run "flows scan" first');
+  const pages = graphs.flatMap(({ graph }) => graph.nodes.flatMap((node) => (node.kind === 'page' ? [node.attrs.path] : [])));
+  const embedder = createEmbeddingProvider(project.config.embedder, join(storageDir(project), 'models'), progress());
+  const engine = engineDeps(project, embedder);
+  console.log(`exploring ${url} ${name === undefined ? 'signed out' : `as ${name}`}; it only reads: every write and WebSocket is blocked`);
+  const run = await explore(
+    { url, session: name ?? null, storageState, credentials, saveSessionTo: credentials === undefined ? undefined : saved, pages, source: sourceTexts(graphs.map(({ graph }) => graph)), headless: !values.headed },
+    { decider: engine.decider, llm: engine.llm, config: project.config.explorer, runDir: (id) => runDir(project, id), log: (line) => console.log(line) },
+  );
+  saveRun(project, run);
+  for (const line of runLines(run)) console.log(line);
+  for (const { repo, graph } of graphs) {
+    const set = await refreshFlows(project, repo, graph, engine);
+    console.log(`${repo.role}  ${repo.path}`);
+    for (const line of crossCheckLines(set)) console.log(line);
+  }
+  if (engine.llm.pending > 0) console.log(`${engine.llm.pending} AI job(s) wait for your coding assistant: run "flows jobs", answer them, then explore or scan again`);
+}
+
 function show(project: Project, what: string): void {
+  if (what === 'crosscheck') return showCrossCheck(project);
   if (what === 'missed') return showMissed(project);
   if (what === 'flows' || what === 'rejected' || what === 'unreachable') return showFlows(project, what);
   const kind = what.replace(/s$/, '');
@@ -430,6 +493,21 @@ async function run(): Promise<void> {
         writeJsonAtomic(resolve(values.out), exported, 2);
         console.log(`${exported.flows.length} flows written to ${resolve(values.out)}`);
       }
+      return;
+    }
+    case 'explore':
+      if (!sub) throw new FlowsError('usage: flows explore <url> [--as <name>] [--headed]');
+      return await exploreLive(loadProject(root), sub);
+    case 'login': {
+      const name = loginName();
+      if (!sub || name === undefined) throw new FlowsError('usage: flows login <url> --as <name>');
+      const project = loadProject(root);
+      await loginByHand(sub, sessionFile(project, name), project.config.explorer, async () => {
+        console.log('Log in in the browser window, then press Enter here.');
+        await new Promise<void>((done) => process.stdin.once('data', () => done()));
+        process.stdin.pause();
+      });
+      console.log(`saved the session "${name}" in Flows' cache (never in .flows/); "flows explore ${sub} --as ${name}" uses it`);
       return;
     }
     case 'jobs':

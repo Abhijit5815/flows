@@ -32,6 +32,7 @@ test('init writes only id, name and repos; loading fills in every default', () =
   assert.deepEqual(threshold(config, 'destructive-risk'), { min_prob: 0.7, min_margin: 0.1 });
   assert.equal(categories(config), DEFAULT_CATEGORIES);
   assert.deepEqual(config.explorer, { max_pages: 50, max_depth: 3, min_safe_prob: 0.8, logins: {} });
+  assert.equal(config.engine.observed_only_weight, 0.9);
 });
 
 test('init refuses to overwrite an existing project', () => {

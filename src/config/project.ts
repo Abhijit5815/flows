@@ -68,7 +68,12 @@ export const ProjectConfigSchema = z.object({
   // live app raises it to 1 in Phase 3), and how deep subflows may nest (PLAN.md §4). describe_min_similarity: how
   // close a description must come to a node before the review page proposes a flow from it.
   engine: z
-    .object({ source_only_weight: z.number().min(0).max(1).default(0.9), max_subflow_depth: z.int().min(1).default(3), describe_min_similarity: z.number().min(0).max(1).default(0.65) })
+    .object({
+      source_only_weight: z.number().min(0).max(1).default(0.9),
+      observed_only_weight: z.number().min(0).max(1).default(0.9), // the same for a flow seen live with no source match
+      max_subflow_depth: z.int().min(1).default(3),
+      describe_min_similarity: z.number().min(0).max(1).default(0.65),
+    })
     .prefault({}),
   // The live-URL explorer (PLAN.md Phase 3): which installed browser (a Playwright channel or a path; by default Chrome,
   // then Edge, then Playwright's Chromium), its budget, how sure the Decider must be that an action is safe before it

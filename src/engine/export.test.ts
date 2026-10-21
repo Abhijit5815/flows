@@ -10,7 +10,7 @@ const flow = (id: string, change: Partial<Flow> = {}): Flow => ({
   schema_version: 0, id, name: id, category: 'browse', kind: 'ui', origin: 'source', status: 'verified', confidence: 0.9,
   enabled: true, destructive: 'no', priority: 'medium', tags: [], version: 1, steps: [step], ...change,
 });
-const set = (flows: Flow[]): FlowSet => ({ flows, reasons: {}, rejected: [], decisions: {}, unreachable: [], notes: [] });
+const set = (flows: Flow[]): FlowSet => ({ flows, reasons: {}, rejected: [], decisions: {}, unreachable: [], notes: [], runs: [], roles: [] });
 const browse: Category = { id: 'browse', name: 'Browse', color: '#336699', editable: true, enabled: true };
 
 test('export: enabled flows in enabled categories, with the subflows they run even when those are off', () => {

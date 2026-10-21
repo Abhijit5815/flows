@@ -16,6 +16,9 @@ export const FlowSetSchema = z.object({
   decisions: z.record(z.string(), z.object({ destructive: DecisionViewSchema, category: DecisionViewSchema })), // "why this flow", by flow id
   unreachable: z.array(z.string()), // graph nodes no entry point leads to
   notes: z.array(z.string()),
+  // Phase 3: the live runs the cross-check used, and each source guard (role) with whether a run got past it.
+  runs: z.array(z.string()).default([]),
+  roles: z.array(z.object({ guard: z.string(), node: z.string(), covered: z.boolean() })).default([]),
 });
 
 export type FlowSet = z.infer<typeof FlowSetSchema>;

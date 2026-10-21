@@ -31,6 +31,9 @@ export const LearnedRuleSchema = z.discriminatedUnion('type', [
     place: Place.optional(), // where a missing step is, when the reviewer knows
     added: Added,
   }),
+  // PLAN.md Phase 3 inspector: a person's correction of what a live element is. On the page pattern, the element with
+  // this selector is that source node, or (node: null) none; the cross-check and the inspector use it before guessing.
+  z.object({ type: z.literal('match'), page: z.string().startsWith('/'), selector: z.string().min(1), node: z.string().min(1).nullable(), added: Added }),
   // Drafted from marked examples for code no adapter reads: every match becomes a route (api) or a page (web),
   // read from the pattern's metavariables.
   z.object({
@@ -47,6 +50,7 @@ export const LearnedRuleSchema = z.discriminatedUnion('type', [
 export type LearnedRule = z.infer<typeof LearnedRuleSchema>;
 export type GenericRule = Extract<LearnedRule, { type: 'generic' }>;
 export type Feedback = Extract<LearnedRule, { type: 'feedback' }>;
+export type MatchRule = Extract<LearnedRule, { type: 'match' }>;
 
 const RulesFileSchema = z.object({ schema_version: z.literal(0), rules: z.array(LearnedRuleSchema) });
 

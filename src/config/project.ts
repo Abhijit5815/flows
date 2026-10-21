@@ -34,6 +34,13 @@ const LocalEmbedderSchema = z.object({
 
 const ThresholdSchema = z.object({ min_prob: z.number().min(0).max(1), min_margin: z.number().min(0).max(1) });
 
+// A login's name ("tester", "admin") names the saved session file, so it is kept to a safe file name.
+export const LoginNameSchema = z.string().regex(/^[a-z0-9][a-z0-9-]{0,39}$/, 'use lowercase letters, digits and dashes');
+
+// Env credentials for one login (PLAN.md Phase 3): the variables' names, never their values. `path` is the page with
+// the login form, when the start page has none.
+const LoginSchema = z.object({ user_env: z.string().min(1), password_env: z.string().min(1), path: z.string().startsWith('/').optional() });
+
 export const DEFAULT_THRESHOLD: Threshold = { min_prob: 0.7, min_margin: 0.1 };
 
 export const ProjectConfigSchema = z.object({
@@ -63,6 +70,18 @@ export const ProjectConfigSchema = z.object({
   engine: z
     .object({ source_only_weight: z.number().min(0).max(1).default(0.9), max_subflow_depth: z.int().min(1).default(3), describe_min_similarity: z.number().min(0).max(1).default(0.65) })
     .prefault({}),
+  // The live-URL explorer (PLAN.md Phase 3): which installed browser (a Playwright channel or a path; by default Chrome,
+  // then Edge, then Playwright's Chromium), its budget, how sure the Decider must be that an action is safe before it
+  // is taken, and the env credentials of each named login.
+  explorer: z
+    .object({
+      browser: z.string().min(1).optional(),
+      max_pages: z.int().positive().default(50),
+      max_depth: z.int().min(0).default(3),
+      min_safe_prob: z.number().min(0).max(1).default(0.8),
+      logins: z.record(LoginNameSchema, LoginSchema).default({}),
+    })
+    .prefault({}),
   storage_dir: z.string().min(1).optional(),
   categories: z.array(CategorySchema).min(1).optional(),
 });
@@ -74,6 +93,7 @@ export type LlmConfig = ProjectConfig['llm'];
 export type EmbedderConfig = ProjectConfig['embedder'];
 export type OpenAiCompatibleConfig = z.infer<typeof OpenAiCompatibleSchema>;
 export type Threshold = z.infer<typeof ThresholdSchema>;
+export type ExplorerConfig = ProjectConfig['explorer'];
 
 // `raw` is the file as written, so saving keeps only what the user set; defaults stay in the schema.
 export type Project = { root: string; config: ProjectConfig; raw: Record<string, unknown> };

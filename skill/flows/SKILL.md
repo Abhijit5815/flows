@@ -1,6 +1,6 @@
 ---
 name: flows
-description: Find the user (UI) flows and API flows of this app from its source code with the Flows CLI, let the user review them on a local page, and export them as JSON for a test tool. Use when the user asks for the app's flows, wants to review or edit them, or wants them exported.
+description: Find the user (UI) flows and API flows of this app from its source code (and, if the user gives one, its live URL) with the Flows CLI, let the user review them on a local page, and export them as JSON for a test tool. Use when the user asks for the app's flows, wants to review or edit them, or wants them exported.
 ---
 
 # Flows
@@ -30,6 +30,22 @@ If `flows` isn't on the PATH, run it as `node <flows checkout>/src/cli/main.ts`.
    - For a category, pick one of the ids the instructions list.
 4. Run `flows scan` again. Repeat until `flows jobs` shows none, or only jobs you can't answer from the facts.
 
+## Check against the live app (optional)
+
+When the user gives the app's URL (any environment), Flows can compare what source says with what the running app
+shows. The explorer only reads: every write and WebSocket is blocked before it reaches the app.
+
+1. If the app needs a login, either the user logs in once with `flows login <url> --as <name>` (a browser window
+   opens; the session is kept in Flows' cache, never in `.flows/`), or the config names env variables that hold
+   test credentials: `"explorer": { "logins": { "<name>": { "user_env": "...", "password_env": "..." } } }`.
+   Never type credentials yourself, and never put them in the config.
+2. `flows explore <url> [--as <name>]` explores, then rebuilds the flows and prints the cross-check: flows
+   confirmed on the live app, flows only in source ("not observed", or "role not explored" when no run got past a
+   guard), and flows only on the live app ("observed-only", disabled until the user reviews them).
+3. For what the explorer can't reach (data entry, other roles), the user can walk the app by hand:
+   `flows inspect [<url>] [--as <name>] [--flow <id>]`, or "Walk this in the inspector" on the review page. The
+   inspector blocks nothing: the user is the one acting.
+
 ## Hand over to the user
 
 1. Run `flows ui` and give the user the URL it prints. The page shows every flow with the code behind each step.
@@ -43,4 +59,5 @@ If `flows` isn't on the PATH, run it as `node <flows checkout>/src/cli/main.ts`.
 - Don't edit the files in `.flows/` by hand: they hold the user's review. Use the page or `flows review`.
 - Flows that delete, pay or send stay disabled until the user marks them correct. Don't mark flows yourself; that
   is the user's review.
-- `flows show flows|rejected|unreachable` prints what the last scan found, if the user asks in the terminal.
+- `flows show flows|rejected|unreachable|crosscheck` prints what the last scan (and live runs) found, if the user asks
+  in the terminal.

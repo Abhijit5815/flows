@@ -4,8 +4,10 @@ import { basename, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { ADAPTERS, adapterFor } from '../adapters/registry.ts';
-import { addRepo, categories, findRepo, initProject, loadProject, LoginNameSchema, projectDataDir, setFramework, storageDir, type Project, type Repo } from '../config/project.ts';
+import { addRepo, categories, findRepo, initProject, loadProject, LoginNameSchema, projectDataDir, setFramework, storageDir, threshold, type Project, type Repo } from '../config/project.ts';
 import { createDecider, createGrounding } from '../decider/create.ts';
+import { DeciderV1 } from '../decider/decider.ts';
+import { drift, evaluateTask, MIN_OVERRIDES } from '../decider/eval.ts';
 import { loadBuiltInTasks } from '../decider/task.ts';
 import { CATALOGUE } from '../embeddings/catalogue.ts';
 import { createEmbeddingProvider } from '../embeddings/create.ts';
@@ -37,7 +39,7 @@ import { proposeRule } from '../rules/propose.ts';
 import { FlowsError } from '../shared/errors.ts';
 import { readCache, writeJsonAtomic } from '../shared/json-file.ts';
 import type { TraceEvent } from '../trace/event.ts';
-import { JsonlTraceSink, readTrace, traceFile } from '../trace/sink.ts';
+import { JsonlTraceSink, MemoryTraceSink, readTrace, traceFile } from '../trace/sink.ts';
 import { startUi } from '../ui/server.ts';
 
 const USAGE = `usage: flows <command> [--project <dir>]
@@ -75,7 +77,8 @@ const USAGE = `usage: flows <command> [--project <dir>]
                                            reproduces the examples exactly
   rule list                                the rules each repo has learned (<repo>/.flows/rules.json)
   eval [--keys <dir>] [--samples <dir>]    recall and precision against hand-written answer keys (default: the
-                                           sample apps); exits 1 on any miss or extra
+                                           sample apps), exiting 1 on any miss or extra; in a project folder also
+                                           the Decider's accuracy, calibration and drift since its last refit
   models list                              the embedding model catalogue
   decide <task> <text>                     run the Decider once, all of the task's labels allowed
   trace [--kind decision|llm_call] [--type <task>] [--last <n>] [--json]`;
@@ -450,7 +453,38 @@ async function evalAll(): Promise<void> {
       console.log(`    ${role}: ${coverage.unrecognised.length} unrecognised, ${coverage.missed.length} possibly missed (pattern search), ${coverage.parseErrors.length} files with parse errors  (${result.ms.toFixed(0)} ms)`);
     }
   }
+  if (existsSync(join(root, '.flows', 'config.json'))) await evalDecider(loadProject(root));
+  else console.log('\nno Flows project here, so no Decider report; run "flows eval" in a project folder for it');
   if (!clean) process.exitCode = 1;
+}
+
+// PLAN.md Phase 7 eval harness: each decision type on its held-out half, with what the project taught it, and the
+// drift monitor. Its own decisions are kept out of the project's trace, which the drift monitor reads.
+async function evalDecider(project: Project): Promise<void> {
+  const learned = learnedExamples(project);
+  const tasks = withLearned(loadBuiltInTasks(), learned);
+  const decider = new DeciderV1({
+    tasks,
+    provider: createEmbeddingProvider(project.config.embedder, join(storageDir(project), 'models'), progress()),
+    trace: new MemoryTraceSink(),
+    cacheDir: join(projectDataDir(project), 'index'),
+    threshold: (task) => threshold(project.config, task),
+  });
+  const pct = (value: number) => `${(value * 100).toFixed(0)}%`;
+  const events = readTrace(traceFile(projectDataDir(project)));
+  console.log('\nDecider (held-out half of each labelled set, with this project\'s learned examples)');
+  for (const task of tasks) {
+    const report = await evaluateTask(decider, task);
+    const added = Object.values(learned[task.task] ?? {}).flat().length;
+    console.log(`  ${task.task.padEnd(18)} accuracy ${pct(report.accuracy)} on ${report.decided}/${report.heldOut} decided (coverage ${pct(report.coverage)})  ECE ${report.ece.toFixed(2)}  learned examples ${added}`);
+    console.log(`    ${report.labels.map((label) => `${label.label}: precision ${pct(label.precision)} recall ${pct(label.recall)}`).join('  |  ')}`);
+    if (report.accuracy < 0.9) console.log('    below the 90% gate');
+    const version = await decider.version(task.task);
+    const decisions = new Map(events.flatMap((event) => (event.kind === 'decision' && event.decision_type === task.task && event.model_version === version ? [[event.input, event.label] as const] : [])));
+    const found = drift(task.task, decisions, learned[task.task] ?? {}, project.config.decider.drift_warn);
+    const rate = found.rate === null ? `too few to tell (${found.overridden} of ${MIN_OVERRIDES} needed)` : pct(found.rate);
+    console.log(`    drift since the last refit: ${found.overridden} of ${found.decided} decisions overridden, ${rate}${found.warn ? `  WARNING: above decider.drift_warn ${project.config.decider.drift_warn}` : ''}`);
+  }
 }
 
 async function run(): Promise<void> {

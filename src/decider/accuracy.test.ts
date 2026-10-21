@@ -10,7 +10,8 @@ import { LocalEmbeddingProvider } from '../embeddings/local.ts';
 import { liveModelsDir, liveSkip } from '../shared/testing/live.ts';
 import { MemoryTraceSink } from '../trace/sink.ts';
 import { DeciderV1, UNKNOWN } from './decider.ts';
-import { loadBuiltInTasks, testHalf } from './task.ts';
+import { evaluateTask } from './eval.ts';
+import { loadBuiltInTasks } from './task.ts';
 
 // Provisional gate from the Phase 1 plan: when the Decider does decide, it is right at least 90% of the time.
 const GATE = 0.9;
@@ -29,20 +30,14 @@ test('live: Decider accuracy on the held-out half of each labelled set', { skip:
   // One subtest per type, so one type's result never hides another's.
   for (const task of tasks) {
     await t.test(task.task, async (st) => {
-      const results = [];
-      for (const item of testHalf(task)) results.push({ item, decision: await decider.decide(task.task, item.text, task.labels) });
-      const decided = results.filter((result) => result.decision.label !== UNKNOWN);
-      const correct = decided.filter((result) => result.decision.label === result.item.label);
+      const report = await evaluateTask(decider, task);
       const byRule = trace.events.filter((event) => event.kind === 'decision' && event.decision_type === task.task && event.source === 'rule').length;
       st.diagnostic(
-        `${results.length} held-out | decided ${decided.length} (coverage ${percent(decided.length, results.length)}) | ` +
-          `right ${correct.length} (accuracy on decided ${percent(correct.length, decided.length)}) | overall ${percent(correct.length, results.length)} | by rule ${byRule}`,
+        `${report.heldOut} held-out | decided ${report.decided} (coverage ${percent(report.decided, report.heldOut)}) | ` +
+          `right ${report.right} (accuracy on decided ${percent(report.right, report.decided)}) | overall ${percent(report.right, report.heldOut)} | by rule ${byRule} | ECE ${report.ece.toFixed(2)}`,
       );
-      for (const { item, decision } of results.filter((result) => result.decision.label !== result.item.label)) {
-        const kind = decision.label === UNKNOWN ? 'unknown' : 'WRONG';
-        st.diagnostic(`${kind}: "${item.text}" expected ${item.label}, got ${decision.label} (top p=${decision.prob.toFixed(2)})`);
-      }
-      assert.ok(decided.length === 0 || correct.length / decided.length >= GATE, `accuracy on decided items is below ${GATE}`);
+      for (const miss of report.misses) st.diagnostic(`${miss.got === UNKNOWN ? 'unknown' : 'WRONG'}: "${miss.text}" expected ${miss.expected}, got ${miss.got} (top p=${miss.prob.toFixed(2)})`);
+      assert.ok(report.accuracy >= GATE, `accuracy on decided items is below ${GATE}`);
     });
   }
 });

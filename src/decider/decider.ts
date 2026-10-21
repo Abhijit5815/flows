@@ -87,6 +87,13 @@ export class DeciderV1 implements Decider {
     return decision;
   }
 
+  // The version decisions of this type carry now: it changes when the model or the task's data does (a refit).
+  async version(taskType: string): Promise<string> {
+    const task = this.#deps.tasks.find((candidate) => candidate.task === taskType);
+    if (!task) throw new DeciderError(`unknown decision type "${taskType}"`);
+    return (await this.#prepare(task)).version;
+  }
+
   async #classify(prepared: Prepared, input: string, allowedLabels: readonly string[], threshold: Threshold): Promise<Decision> {
     const [vector] = await this.#deps.provider.embed([input]);
     const probs = softmax(bestScores(vector, prepared, allowedLabels.map((label) => prepared.labels.indexOf(label))), prepared.temperature);

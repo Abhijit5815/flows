@@ -61,7 +61,8 @@ export const ProjectConfigSchema = z.object({
     .discriminatedUnion('provider', [AnthropicSchema, OpenAiCompatibleSchema, AssistantSchema])
     .prefault({ provider: 'openai-compatible', base_url: 'http://localhost:11434/v1', model: 'llama3.2:3b' }),
   embedder: z.discriminatedUnion('provider', [LocalEmbedderSchema, OpenAiCompatibleSchema]).prefault({ provider: 'local' }),
-  decider: z.object({ thresholds: z.record(z.string(), ThresholdSchema).prefault({}) }).prefault({}),
+  // drift_warn: the share of the current Decider's decisions people overrode above which `flows eval` warns (Phase 7).
+  decider: z.object({ thresholds: z.record(z.string(), ThresholdSchema).prefault({}), drift_warn: z.number().min(0).max(1).default(0.2) }).prefault({}),
   // The "possibly missed" list after each scan: how alike a function must be to the graph's handlers or actions.
   possibly_missed: z.object({ min_similarity: z.number().min(0).max(1).default(0.78), limit: z.int().positive().default(20) }).prefault({}),
   // The flow engine's judge: the confidence of a source-only flow whose claims are all proven (agreement with the

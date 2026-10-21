@@ -12,6 +12,7 @@ import { createEmbeddingProvider } from '../embeddings/create.ts';
 import { modelDir } from '../embeddings/download.ts';
 import { refreshFlows, verdictsOf, type EngineDeps } from '../engine/engine.ts';
 import { exportFlows } from '../engine/export.ts';
+import { learnedExamples, withLearned } from '../engine/learning.ts';
 import { OptionalLlm } from '../engine/llm.ts';
 import { loadFlows, type FlowSet } from '../engine/store.ts';
 import { stepLine } from '../engine/views.ts';
@@ -160,7 +161,7 @@ const jobsFile = (project: Project): string => join(projectDataDir(project), 'jo
 function engineDeps(project: Project, embedder: ReturnType<typeof createEmbeddingProvider>): EngineDeps {
   const trace = new JsonlTraceSink(traceFile(projectDataDir(project)));
   return {
-    decider: createDecider(project, progress(), embedder),
+    decider: createDecider(project, progress(), embedder, withLearned(loadBuiltInTasks(), learnedExamples(project))),
     grounding: createGrounding(project, progress()),
     llm: new OptionalLlm(createGateway(project.config.llm, trace, jobsFile(project)), join(projectDataDir(project), 'llm-cache.json'), (reason) =>
       console.log(`  the LLM is off for the rest of this scan, so names and unknown categories come from source: ${reason}`),

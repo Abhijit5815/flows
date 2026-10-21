@@ -6,13 +6,14 @@ import type { EmbeddingProvider } from '../embeddings/provider.ts';
 import { JsonlTraceSink, traceFile } from '../trace/sink.ts';
 import { DeciderV1 } from './decider.ts';
 import { EntailmentDecider, GROUNDING } from './entailment.ts';
-import { loadBuiltInTasks } from './task.ts';
+import { loadBuiltInTasks, type Task } from './task.ts';
 
-// Wires a Decider from the project config: its embedder (or one the caller already has), its trace file and its cache folder.
-export function createDecider(project: Project, onProgress?: Progress, provider?: EmbeddingProvider): DeciderV1 {
+// Wires a Decider from the project config: its embedder (or one the caller already has), its trace file and its cache
+// folder. tasks: the built-in ones by default; the CLI passes them with the project's learned examples (Phase 7).
+export function createDecider(project: Project, onProgress?: Progress, provider?: EmbeddingProvider, tasks: readonly Task[] = loadBuiltInTasks()): DeciderV1 {
   const dataDir = projectDataDir(project);
   return new DeciderV1({
-    tasks: loadBuiltInTasks(),
+    tasks,
     provider: provider ?? createEmbeddingProvider(project.config.embedder, join(storageDir(project), 'models'), onProgress),
     trace: new JsonlTraceSink(traceFile(dataDir)),
     cacheDir: join(dataDir, 'index'),

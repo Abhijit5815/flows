@@ -1,0 +1,14 @@
+{
+  "name": "quickstart-web",
+  "private": true,
+  "description": "A small Next.js 14 App Router shop: the sample web app for the Flows quickstart.",
+  "scripts": {
+    "dev": "next dev"
+  },
+  "dependencies": {
+    "next": "^14.2.5",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "zod": "^3.23.8"
+  }
+}

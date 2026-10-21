@@ -1,0 +1,17 @@
+{
+  "name": "quickstart-api",
+  "private": true,
+  "description": "A small Express 4 API: the sample backend for the Flows quickstart.",
+  "scripts": {
+    "start": "ts-node src/server.ts"
+  },
+  "dependencies": {
+    "@prisma/client": "^5.18.0",
+    "express": "^4.19.2",
+    "jsonwebtoken": "^9.0.2",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "supertest": "^7.0.0"
+  }
+}

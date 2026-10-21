@@ -133,7 +133,7 @@ Decision order, stopping at the first that is sure: (1) plain rules, (2) embeddi
 
 ### Phase 7: Learning loop, evals, packaging (later)
 - Feedback becomes labelled examples and rules; Decider re-fit and re-calibration per project.
-- Eval harness: labelled sets per decision type, precision/recall, calibration checks. (Candidate to cut: drift monitor of Decider vs human overrides.)
+- Eval harness: labelled sets per decision type, precision/recall, calibration checks, and a drift monitor of Decider vs human overrides (kept, 2026-10-21).
 - Staleness: on code change, flag flows that lost evidence.
 - Token and cost report per run.
 - Packaging: TypeScript library (with a build step to JavaScript, since Node won't run `.ts` files from installed packages) + CLI + local app + Agent Skill; a setup command that downloads the embedding model ahead of time (some assistants block the network inside their sandbox); README; sample project.
@@ -213,7 +213,12 @@ First release: Next.js 14 (App Router) frontend and Express 4 + TypeScript backe
   - **Matching:** a UI flow matches by its page and visible elements. Its calls are evidence when they were seen; they don't decide, because a Next.js server component makes some calls out of the browser's sight. An API flow matches by method and the most specific route pattern, and only an answer other than 404, 405 or 501 confirms it.
   - **Explorer gate:** it rates a control as the source flows it matches, by the engine's own texts, and uses the live text only when nothing matches. The Decider data is Phase 4's, unchanged, plus a new `event-noise` task.
   - **Exit:** chessu ran on the user's Mac (pnpm through npx, PostgreSQL 15 from Homebrew, its data in the cache). Claude wrote the answer key, `ground-truth/live/chessu.json`, from a browser walk before any explorer run.
-- Still open: whether to cut the Phase 7 drift monitor.
+- Phase 7, decided 2026-10-21 with the approved design:
+  - **Drift monitor:** kept. `flows eval` reports, per decision type, how often people overrode the current Decider version; below 10 overrides it says "too few to tell", above `decider.drift_warn` (default 0.2) it warns.
+  - **Learning:** only unambiguous feedback teaches the Decider: a person's category is a `flow-category` example, a flow marked correct and left enabled is a `destructive-risk` `safe` example; wrong and never teach nothing. The labelled (held-out) sets stay the built-in ones.
+  - **Cost:** tokens per run from the trace; money only from `llm.price_per_mtok` in config, never invented prices.
+  - **Shipping:** a tarball from `npm pack`, not published (`private: true`). `npm run build` emits JavaScript to `dist/` with the review page pre-bundled; `flows setup` downloads the models ahead of time.
+  - **Exit:** run on this Mac (macOS arm64, Node 25.3) in an empty home, npm cache and global prefix: install 12 s, `flows setup` 28 s (about 430 MB), scan of `examples/quickstart` 62 s with Ollama and under 2 s with the LLM unreachable, 22 flows exported either way. Windows and Linux are unverified.
 - Hosted LLM check (left open when Phase 1 closed, 2026-10-19): the hosted path of the LLM gateway (Claude through the Anthropic SDK, or any OpenAI-compatible provider) is tested only against a fake server. A real call still needs a user's own API key; Phase 1 closed with the local model (Ollama `llama3.2:3b`) verified live.
 
 ## 14. First supported stack (slice 1)

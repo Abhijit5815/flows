@@ -40,7 +40,8 @@ import { proposeRule } from '../rules/propose.ts';
 import { FlowsError } from '../shared/errors.ts';
 import { readCache, writeJsonAtomic } from '../shared/json-file.ts';
 import type { TraceEvent } from '../trace/event.ts';
-import { JsonlTraceSink, MemoryTraceSink, readTrace, traceFile } from '../trace/sink.ts';
+import { costs, priceOf, type RunCost } from '../trace/cost.ts';
+import { JsonlTraceSink, MemoryTraceSink, readTrace, RUN, traceFile } from '../trace/sink.ts';
 import { startUi } from '../ui/server.ts';
 
 const USAGE = `usage: flows <command> [--project <dir>]
@@ -82,7 +83,9 @@ const USAGE = `usage: flows <command> [--project <dir>]
                                            the Decider's accuracy, calibration and drift since its last refit
   models list                              the embedding model catalogue
   decide <task> <text>                     run the Decider once, all of the task's labels allowed
-  trace [--kind decision|llm_call] [--type <task>] [--last <n>] [--json]`;
+  trace [--kind decision|llm_call] [--type <task>] [--last <n>] [--json]
+  cost [--last <n>]                        LLM calls, tokens and cost of each run (a cost only with
+                                           llm.price_per_mtok in the config; local models and the assistant cost 0)`;
 
 const { values, positionals } = parseArgs({
   allowPositionals: true,
@@ -211,6 +214,22 @@ async function scanAll(project: Project): Promise<void> {
     for (const flow of set.gone) console.log(`  gone: ${flow.id}  ${flow.name}: ${flow.reason}`);
   }
   if (engine.llm.pending > 0) console.log(`${engine.llm.pending} AI job(s) wait for your coding assistant: run "flows jobs", answer them, then scan again`);
+  const run = costs(readTrace(traceFile(projectDataDir(project))), priceOf(project.config.llm)).find((candidate) => candidate.run === RUN);
+  console.log(run === undefined ? 'LLM: no calls this scan' : `LLM: ${costLine(run)}; see "flows cost"`);
+}
+
+const money = (value: number) => `$${value.toFixed(value < 0.01 ? 4 : 2)}`;
+
+function costLine(run: RunCost): string {
+  const tokens = run.models.map((use) => `${use.model} ${use.calls} calls, ${use.input} in / ${use.output} out tokens${use.uncounted > 0 ? ` (${use.uncounted} without a count)` : ''}`).join('; ');
+  return `${tokens}; ${run.cost === null ? 'cost unknown (set llm.price_per_mtok to price it)' : money(run.cost)}`;
+}
+
+// PLAN.md Phase 7: tokens and cost per run, from the trace.
+function showCost(project: Project): void {
+  const runs = costs(readTrace(traceFile(projectDataDir(project))), priceOf(project.config.llm)).slice(-Number(values.last ?? 10));
+  if (runs.length === 0) console.log('no LLM calls yet');
+  for (const run of runs) console.log(`${run.run}  ${costLine(run)}`);
 }
 
 function showJobs(project: Project): void {
@@ -603,6 +622,8 @@ async function run(): Promise<void> {
     }
     case 'trace':
       return showTrace(loadProject(root));
+    case 'cost':
+      return showCost(loadProject(root));
     default:
       console.log(USAGE);
       if (command !== undefined && command !== 'help') process.exitCode = 1;

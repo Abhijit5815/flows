@@ -10,7 +10,10 @@ export interface TraceSink {
 
 const checked = (event: TraceEvent): TraceEvent => parseOrThrow(TraceEventSchema, event, 'trace event', FlowsError);
 
-// Append-only: one validated event per line, never rewritten.
+// This process's run: when it started and which command it is. One CLI invocation is one run.
+export const RUN = `${new Date().toISOString()} ${process.argv[2] ?? 'library'}`;
+
+// Append-only: one validated event per line, never rewritten, each stamped with this process's run.
 export class JsonlTraceSink implements TraceSink {
   readonly file: string;
 
@@ -20,7 +23,7 @@ export class JsonlTraceSink implements TraceSink {
   }
 
   record(event: TraceEvent): void {
-    appendFileSync(this.file, `${JSON.stringify(checked(event))}\n`);
+    appendFileSync(this.file, `${JSON.stringify(checked({ ...event, run: RUN }))}\n`);
   }
 }
 

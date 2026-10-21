@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 
-const Common = { id: z.uuid(), at: z.iso.datetime(), duration_ms: z.number().nonnegative() };
+// run: which invocation wrote the event ("2026-10-21T09:00:00.000Z scan"), for the per-run token report.
+const Common = { id: z.uuid(), at: z.iso.datetime(), duration_ms: z.number().nonnegative(), run: z.string().optional() };
 
 // PLAN.md §4 TraceEvent: decision_type, inputs_ref, probs, threshold, model_version, llm_call, tokens.
 // Decisions also keep their input text so they can be replayed.

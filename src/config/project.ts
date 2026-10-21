@@ -10,8 +10,12 @@ import { parseOrThrow } from '../shared/validate.ts';
 
 const RoleSchema = z.enum(['web', 'api']);
 
+// What the user pays per million tokens, for `flows cost`; Flows knows no prices of its own.
+const PriceSchema = z.object({ input: z.number().nonnegative(), output: z.number().nonnegative() });
+
 const OpenAiCompatibleSchema = z.object({
   provider: z.literal('openai-compatible'),
+  price_per_mtok: PriceSchema.optional(),
   base_url: z.url(),
   model: z.string().min(1),
   api_key_env: z.string().min(1).optional(),
@@ -20,6 +24,7 @@ const OpenAiCompatibleSchema = z.object({
 
 const AnthropicSchema = z.object({
   provider: z.literal('anthropic'),
+  price_per_mtok: PriceSchema.optional(),
   model: z.string().min(1).default('claude-opus-5-5'),
   effort: z.enum(['low', 'medium', 'high', 'xhigh', 'max']).default('low'),
 });

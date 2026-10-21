@@ -1,9 +1,57 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import type { DecisionView } from '../../engine/classify.ts';
 import type { Flow } from '../../model/flow.ts';
+import type { Evidence } from '../../model/evidence.ts';
 import type { Snippet } from '../api.ts';
-import { get } from './client.ts';
-import { place, type Item } from './model.ts';
+import { blobUrl, get } from './client.ts';
+import { NOT_OBSERVED, place, ROLE_NOT_EXPLORED, type Item } from './model.ts';
+
+const observedPath = (ref: string) => `/api/observed?ref=${encodeURIComponent(ref)}`;
+
+// What a run captured for a step (Phase 3): the screenshot, the redacted request and response, or the element and
+// its selector. Runs are a deletable cache, so a capture can be gone; the panel says so.
+function Captured({ evidence }: { evidence: Exclude<Evidence, { type: 'code' }> }) {
+  const [shown, setShown] = useState<string | { value: unknown } | { error: string } | undefined>();
+  useEffect(() => {
+    setShown(undefined);
+    let url: string | undefined;
+    const failed = (error: Error) => setShown({ error: error.message });
+    if (evidence.type === 'screenshot') {
+      blobUrl(observedPath(evidence.ref)).then((made) => {
+        url = made;
+        setShown(made);
+      }, failed);
+    } else if (evidence.type === 'network') get<unknown>(observedPath(evidence.ref)).then((value) => setShown({ value }), failed);
+    return () => {
+      if (url !== undefined) URL.revokeObjectURL(url);
+    };
+  }, [evidence.type, evidence.ref]);
+  if (evidence.type === 'dom') {
+    const selector = evidence.ref.slice(evidence.ref.indexOf(' ') + 1);
+    return (
+      <p className="muted">
+        Seen on the live app{evidence.ref.includes(' ') ? `: ${selector}` : ''}
+        {/ xpath:/.test(evidence.ref) ? ' (no stable selector: only its place in the page finds it)' : ''}
+      </p>
+    );
+  }
+  if (shown === undefined) return <p className="muted">Loading what the run captured…</p>;
+  if (typeof shown === 'object' && 'error' in shown) return <p className="muted">Can't show what the run captured: {shown.error}</p>;
+  if (typeof shown === 'string') {
+    return (
+      <figure className="shot">
+        <img src={shown} alt="What the page showed in the live run" />
+        <figcaption>Screenshot from the live run; it stays in Flows' local cache.</figcaption>
+      </figure>
+    );
+  }
+  return (
+    <figure className="code">
+      <figcaption>Request and response from the live run (redacted)</figcaption>
+      <pre>{JSON.stringify(shown.value, null, 2)}</pre>
+    </figure>
+  );
+}
 
 // The code at one cited place, with the lines around it; only the selected flow's places are fetched.
 function Code({ repo, at }: { repo: string; at: string }) {
@@ -87,6 +135,8 @@ export function Panel({ item, onClose, children }: { item: Item; onClose: () => 
         <span className="badge">confidence {flow.confidence.toFixed(2)}</span>
         <span className="badge">{flow.category}</span>
         {flow.destructive === 'no' ? null : <span className="badge warn">destructive: {flow.destructive}</span>}
+        {flow.tags.includes(NOT_OBSERVED) ? <span className="badge gap">not observed</span> : null}
+        {flow.tags.includes(ROLE_NOT_EXPLORED) ? <span className="badge gap">role not explored</span> : null}
         <span className="badge">{flow.enabled ? 'enabled' : 'disabled'}</span>
       </div>
       {flow.description === undefined ? null : <p>{flow.description}</p>}
@@ -106,7 +156,7 @@ export function Panel({ item, onClose, children }: { item: Item; onClose: () => 
                 </p>
               )}
               {expectation(step.check) === undefined ? (step.kind === 'subflow' ? null : <p className="muted">No check: source doesn't say what to expect.</p>) : <p>Expect: {expectation(step.check)}</p>}
-              {step.evidence.map((evidence) => (evidence.type === 'code' ? <Code key={`${step.id}:${evidence.ref}`} repo={item.repo.path} at={evidence.ref} /> : <p key={evidence.ref}>{evidence.ref}</p>))}
+              {step.evidence.map((evidence) => (evidence.type === 'code' ? <Code key={`${step.id}:${evidence.ref}`} repo={item.repo.path} at={evidence.ref} /> : <Captured key={`${step.id}:${evidence.ref}`} evidence={evidence} />))}
             </li>
           ))}
         </ol>

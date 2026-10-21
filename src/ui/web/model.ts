@@ -2,6 +2,11 @@ import type { FlowSet } from '../../engine/store.ts';
 import type { Flow } from '../../model/flow.ts';
 import type { ProjectView, RepoView } from '../api.ts';
 
+export { NOT_OBSERVED, ROLE_NOT_EXPLORED } from '../../model/tags.ts';
+
+// An observed step whose element has only an XPath to find it by (src/live/snapshot.ts): "no stable selector".
+export const unstable = (step: Flow['steps'][number]): boolean => step.evidence.some((evidence) => evidence.type === 'dom' && / xpath:/.test(evidence.ref));
+
 // One flow on the page, with the repo it came from and the engine's notes on it.
 export type Item = { key: string; repo: RepoView; flow: Flow; reasons: string[]; decisions: FlowSet['decisions'][string] | undefined };
 

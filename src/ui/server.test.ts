@@ -1,17 +1,18 @@
 import { after, before, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { request } from 'node:http';
-import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { addRepo, categories } from '../config/project.ts';
+import { addRepo, categories, type Project } from '../config/project.ts';
 import type { Decider } from '../decider/decider.ts';
 import type { EmbeddingProvider } from '../embeddings/provider.ts';
 import { buildFlows } from '../engine/engine.ts';
 import { OptionalLlm } from '../engine/llm.ts';
 import { saveFlows } from '../engine/store.ts';
 import { scanRepo } from '../ingest/pipeline.ts';
+import { runDir, saveRun, type Run } from '../live/run.ts';
 import { tempProject } from '../shared/testing/project.ts';
 import { MemoryTraceSink } from '../trace/sink.ts';
 import { TOKEN_HEADER, type ProjectView, type Snippet } from './api.ts';
@@ -23,6 +24,7 @@ const fixture = join(tmp, 'next-basic');
 cpSync(fileURLToPath(new URL('../../fixtures/apps/next-basic/', import.meta.url)), fixture, { recursive: true });
 let ui: Ui;
 let token = '';
+let project: Project;
 
 const unsure: Decider = { decide: async () => ({ label: 'unknown', prob: 0.5, all_probs: {}, version: 'stub' }) };
 
@@ -39,7 +41,7 @@ const embedder: EmbeddingProvider = {
 };
 
 before(async () => {
-  const project = addRepo(tempProject(join(tmp, 'project')), fixture, 'web');
+  project = addRepo(tempProject(join(tmp, 'project')), fixture, 'web');
   const repo = project.config.repos[0];
   const { graph } = await scanRepo(project, repo);
   assert.ok(graph);
@@ -150,4 +152,29 @@ test('the palette, drawing a flow from picked nodes, and describing one in words
   assert.ok(described.flow, described.message);
   const nothing = (await (await post('/api/describe', { repo, text: 'export invoices as a spreadsheet' })).json()) as { flow?: unknown; closest: unknown[] };
   assert.deepEqual([nothing.flow, nothing.closest.length], [undefined, 5]);
+});
+
+test('observed evidence comes from the run index by id: a request as JSON, a screenshot as an image, never by path', async () => {
+  const id = 'explorer-20261020t120000z-test';
+  const run: Run = {
+    schema_version: 0, id, kind: 'explorer', url: 'http://127.0.0.1:3000/', origin: 'http://127.0.0.1:3000', session: null, started: '2026-10-20T12:00:00Z', finished: '2026-10-20T12:01:00Z', browser: 'stub',
+    states: [{ n: 0, url: 'http://127.0.0.1:3000/', path: '/', title: 'Home', text: '', links: [], buttons: [], forms: [], shot: 's0.jpg', from: null, requested: null }],
+    actions: [],
+    requests: [{ n: 0, state: 0, action: null, visit: 0, method: 'GET', url: 'http://127.0.0.1:3000/api/products', origin: 'http://127.0.0.1:3000', path: '/api/products', resource: 'fetch', kind: 'api', server_action: false, status: 200, blocked: false, failed: null, response: { type: 'application/json', fields: ['id'], body: [{ id: '1' }] }, noise: null }],
+    sockets: [],
+    notes: [],
+  };
+  mkdirSync(runDir(project, id), { recursive: true });
+  writeFileSync(join(runDir(project, id), 's0.jpg'), Buffer.from([0xff, 0xd8, 0xff, 0xd9]));
+  saveRun(project, run);
+  const at = (ref: string, withToken = true) => api(`/api/observed?ref=${encodeURIComponent(ref)}`, withToken);
+  assert.equal((await at(`${id}#r0`, false)).status, 403);
+  assert.deepEqual(((await (await at(`${id}#r0`)).json()) as { path: string }).path, '/api/products');
+  const shot = await at(`${id}#s0.jpg`);
+  assert.equal(shot.headers.get('content-type'), 'image/jpeg');
+  assert.deepEqual(Buffer.from(await shot.arrayBuffer()), Buffer.from([0xff, 0xd8, 0xff, 0xd9]));
+  assert.equal((await at('../../etc/passwd#s0.jpg')).status, 400);
+  assert.equal((await at(`${id}#r0.jpg`)).status, 400);
+  assert.equal((await at('explorer-gone#s0')).status, 404);
+  assert.equal((await at(`${id}#r9`)).status, 404);
 });

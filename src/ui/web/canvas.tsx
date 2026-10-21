@@ -1,7 +1,7 @@
 import { Background, Controls, Handle, MarkerType, Position, ReactFlow, type Edge, type Node, type NodeProps } from '@xyflow/react';
 import { useMemo, type CSSProperties } from 'react';
 import type { Category } from '../../model/category.ts';
-import type { Item } from './model.ts';
+import { NOT_OBSERVED, ROLE_NOT_EXPLORED, unstable, type Item } from './model.ts';
 
 // PLAN.md Phase 5: nodes are steps, lanes are categories. Each flow is a row in its category's lane: a header
 // node, then its steps left to right. Positions are computed here; nothing is dragged.
@@ -38,6 +38,8 @@ function FlowNode({ data }: NodeProps<Node<FlowData, 'flow'>>) {
         <span className="badge">{flow.kind.toUpperCase()}</span>
         <span className="badge" title="confidence">{flow.confidence.toFixed(2)}</span>
         {held ? <span className="badge warn" title={`destructive: ${flow.destructive}`}>review</span> : null}
+        {flow.tags.includes(NOT_OBSERVED) ? <span className="badge gap">not observed</span> : null}
+        {flow.tags.includes(ROLE_NOT_EXPLORED) ? <span className="badge gap">role not explored</span> : null}
         {flow.enabled ? null : <span className="badge muted">off</span>}
       </div>
       <div className="flow-name">{flow.name}</div>
@@ -57,6 +59,7 @@ function StepNode({ data }: NodeProps<Node<StepData, 'step'>>) {
       <div className="step-badges">
         <span className="step-kind">{step.kind}</span>
         {step.check === null && step.kind !== 'subflow' ? <span className="badge muted">no check</span> : null}
+        {unstable(step) ? <span className="badge warn">no stable selector</span> : null}
         {step.enabled ? null : <span className="badge muted">off</span>}
       </div>
       <div className="step-claim">{step.claim}</div>

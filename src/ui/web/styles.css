@@ -83,6 +83,13 @@ button.icon { border: none; background: none; font-size: 20px; line-height: 1; p
 .status-verified { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 40%, transparent); }
 .status-unverified { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 40%, transparent); }
 .status-unreachable, .status-rejected { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 40%, transparent); }
+.status-confirmed { color: var(--ok); border-color: var(--ok); background: color-mix(in srgb, var(--ok) 12%, transparent); }
+.status-observed-only { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
+.badge.gap { color: var(--warn); border-style: dashed; border-color: color-mix(in srgb, var(--warn) 55%, transparent); }
+.roles { flex-basis: 100%; margin: 0; font-size: 12px; color: var(--warn); }
+.shot { margin: 8px 0; }
+.shot img { display: block; max-width: 100%; border: 1px solid var(--line); border-radius: 6px; }
+.shot figcaption { font-size: 11px; color: var(--muted); }
 .badge.warn { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 45%, transparent); }
 .badge.muted { color: var(--muted); }
 

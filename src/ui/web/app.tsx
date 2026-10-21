@@ -14,7 +14,7 @@ import { Panel } from './panel.tsx';
 import { RejectedList } from './rejected.tsx';
 import { dependentsOf, Subflows } from './subflows.tsx';
 
-const STATUSES = ['verified', 'unverified', 'unreachable', 'rejected'];
+const STATUSES = ['confirmed', 'verified', 'observed-only', 'unverified', 'unreachable', 'rejected'];
 
 // A file the browser saves; the page is served locally, so a plain download link works.
 function save(name: string, text: string): void {
@@ -46,6 +46,8 @@ function App() {
     setSelected(key);
     setSide('flow');
   };
+  // Phase 3: source guards no live run got past, as roles to explore.
+  const unexplored = project?.repos.flatMap((repo) => (repo.set?.roles ?? []).filter((role) => !role.covered).map((role) => `${role.guard} (${repo.role} ${repo.path})`)) ?? [];
   const rejectedCount = project?.repos.reduce((sum, repo) => sum + (repo.set?.rejected.length ?? 0) + (repo.set?.flows.filter((flow) => flow.status === 'rejected').length ?? 0), 0) ?? 0;
 
   if (error !== undefined) return <p role="alert" className="page-message">Could not load the flows: {error}</p>;
@@ -94,6 +96,11 @@ function App() {
           </button>
         </div>
         <Bulk items={shown} categories={project.categories} onView={setProject} />
+        {unexplored.length > 0 ? (
+          <p className="roles" role="note">
+            Roles not explored: {unexplored.join(', ')}. No live run got past these guards, so their flows can't be confirmed yet.
+          </p>
+        ) : null}
       </header>
       <main className={`workspace${(side === 'flow' && current !== undefined) || side !== 'flow' ? ' with-panel' : ''}`}>
         <div className="canvas">

@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { join, resolve } from 'node:path';
@@ -10,6 +10,8 @@ import type { EmbeddingProvider } from '../embeddings/provider.ts';
 import { verdictsOf, type EngineDeps } from '../engine/engine.ts';
 import { exportFlows } from '../engine/export.ts';
 import { loadFlows } from '../engine/store.ts';
+import { parseRef } from '../live/observed.ts';
+import { loadRuns, runDir } from '../live/run.ts';
 import { repoFile } from '../graph/store.ts';
 import { listFiles } from '../ingest/files.ts';
 import { loadRules } from '../rules/learned.ts';
@@ -55,13 +57,14 @@ const page = (name: string, token: string) =>
   `<meta name="flows-token" content="${token}"><title>Flows · ${escapeHtml(name)}</title><link rel="stylesheet" href="/app.css"></head>` +
   '<body><div id="root"></div><script type="module" src="/app.js"></script></body></html>';
 
-function send(res: ServerResponse, status: number, body: string, type: string): void {
+function send(res: ServerResponse, status: number, body: string | Buffer, type: string): void {
   res.writeHead(status, {
     'content-type': type,
     'cache-control': 'no-store',
     'x-content-type-options': 'nosniff',
     // React Flow positions nodes with inline styles; nothing else may load from anywhere but this server.
-    'content-security-policy': "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:",
+    // Screenshots are fetched with the token and shown from blob: URLs.
+    'content-security-policy': "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:",
   });
   res.end(body);
 }
@@ -136,6 +139,23 @@ export async function startUi(start: Project, deps: EngineDeps & { embedder: Emb
     return { file, line, start, lines: lines.slice(start - 1, Math.min(lines.length, line + CONTEXT_LINES)) };
   };
 
+  // Observed evidence (Phase 3) by its ref, looked up by run id and item number in the cache's run index, never by a
+  // path; a screenshot is served only under the name the explorer gives it.
+  const observed = (res: ServerResponse, raw: string): void => {
+    const ref = parseRef(raw);
+    if (ref === undefined) throw new HttpError(400, `"${raw}" is not an observed evidence ref`);
+    const run = loadRuns(project).find((candidate) => candidate.id === ref.run);
+    if (run === undefined) throw new HttpError(404, 'that run is no longer in the cache (it can be deleted); run "flows explore" again');
+    if (ref.kind === 's' && ref.shot) {
+      const shot = run.states[ref.n]?.shot;
+      if (shot === undefined || shot === null || !/^s\d+\.jpg$/.test(shot) || !existsSync(join(runDir(project, run.id), shot))) throw new HttpError(404, 'no screenshot for that state');
+      return send(res, 200, readFileSync(join(runDir(project, run.id), shot)), 'image/jpeg');
+    }
+    const item = ref.kind === 's' ? run.states[ref.n] : ref.kind === 'a' ? run.actions[ref.n] : run.requests[ref.n];
+    if (item === undefined) throw new HttpError(404, `run ${run.id} has no such item`);
+    return json(res, 200, item);
+  };
+
   const handle = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     if (!hosts.has(req.headers.host ?? '')) throw new HttpError(403, 'unknown host');
     const url = new URL(req.url ?? '/', `http://${req.headers.host}`);
@@ -146,6 +166,7 @@ export async function startUi(start: Project, deps: EngineDeps & { embedder: Emb
     if (req.headers[TOKEN_HEADER] !== token) throw new HttpError(403, 'missing or wrong token');
     if (req.method === 'GET' && url.pathname === '/api/project') return json(res, 200, view());
     if (req.method === 'GET' && url.pathname === '/api/snippet') return json(res, 200, snippet(url.searchParams));
+    if (req.method === 'GET' && url.pathname === '/api/observed') return observed(res, url.searchParams.get('ref') ?? '');
     if (req.method === 'GET' && url.pathname === '/api/export') return json(res, 200, exportFlows(project.config.repos.flatMap((repo) => loadFlows(project, repo) ?? []), categories(project.config)));
     if (req.method === 'GET' && url.pathname === '/api/nodes') return json(res, 200, palette(changes.graphOf(url.searchParams.get('repo') ?? '').graph));
     if (req.method === 'POST' && url.pathname === '/api/describe') {

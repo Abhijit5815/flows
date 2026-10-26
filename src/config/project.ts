@@ -1,10 +1,11 @@
 import { randomUUID } from 'node:crypto';
-import { existsSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, relative, resolve } from 'node:path';
 import { z } from 'zod';
 import { CategorySchema, DEFAULT_CATEGORIES, FALLBACK_CATEGORY_ID, type Category } from '../model/category.ts';
 import { ConfigError } from '../shared/errors.ts';
+import { sha256 } from '../shared/hash.ts';
 import { writeJsonAtomic } from '../shared/json-file.ts';
 import { parseOrThrow } from '../shared/validate.ts';
 
@@ -189,7 +190,10 @@ export function storageDir(project: Project): string {
   return defaultStorageDir();
 }
 
-export const projectDataDir = (project: Project): string => join(storageDir(project), 'projects', project.config.id);
+// By the folder as well as the id: a copied project (or a second clone) keeps the id in .flows/config.json, and must not
+// see the original's flows, runs or saved logins. Moving the folder starts a fresh cache.
+export const projectDataDir = (project: Project): string =>
+  join(storageDir(project), 'projects', `${project.config.id}-${sha256(realpathSync.native(project.root)).slice(0, 12)}`);
 
 export const categories = (config: ProjectConfig): readonly Category[] => config.categories ?? DEFAULT_CATEGORIES;
 

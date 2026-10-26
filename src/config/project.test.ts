@@ -1,11 +1,11 @@
 import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DEFAULT_CATEGORIES } from '../model/category.ts';
 import { ConfigError } from '../shared/errors.ts';
-import { addRepo, apiKey, categories, configFile, findRepo, initProject, loadProject, setFramework, storageDir, threshold } from './project.ts';
+import { addRepo, apiKey, categories, configFile, findRepo, initProject, loadProject, projectDataDir, setFramework, storageDir, threshold } from './project.ts';
 
 const tmp = mkdtempSync(join(tmpdir(), 'flows-config-'));
 after(() => rmSync(tmp, { recursive: true, force: true }));
@@ -114,4 +114,14 @@ test('API keys come from the named environment variable, and a missing one is an
   assert.equal(apiKey({ ...config, api_key_env: 'FLOWS_TEST_KEY' }), 'k');
   delete process.env.FLOWS_TEST_KEY;
   assert.throws(() => apiKey({ ...config, api_key_env: 'FLOWS_TEST_KEY' }), isConfigError(/FLOWS_TEST_KEY is not set/));
+});
+
+test("a copied project keeps the id but never shares the original's cache", () => {
+  const root = freshRoot();
+  const original = initProject(root, 'demo');
+  cpSync(root, `${root}-copy`, { recursive: true });
+  const copy = loadProject(`${root}-copy`);
+  assert.equal(copy.config.id, original.config.id);
+  assert.notEqual(projectDataDir(copy), projectDataDir(original));
+  assert.equal(projectDataDir(loadProject(root)), projectDataDir(original), 'the same folder keeps its cache');
 });

@@ -30,6 +30,7 @@
     }
   ],
   "guards": {
+    "libraries": { "express-jwt": 401, "passport": 401, "express-oauth2-jwt-bearer": 401 },
     "name": "auth|guard|protect|jwt|permission|role|logged.?in|signed.?in",
     "body": "\\bjwt\\b|passport\\.authenticate|\\.verify\\(|\\b40[13]\\b"
   },

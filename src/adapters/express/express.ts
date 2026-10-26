@@ -9,7 +9,7 @@ import type { ExtractContext, FrameworkAdapter, Unrecognised } from '../adapter.
 // The rules are data (rules.json); this file follows what they match: routers, mounts, routes, handlers,
 // guards, request schemas, responses and the Prisma models a handler touches.
 const RULES = z
-  .object({ patterns: z.array(PatternRuleSchema), suspects: z.array(PatternRuleSchema), guards: z.object({ name: z.string(), body: z.string() }) })
+  .object({ patterns: z.array(PatternRuleSchema), suspects: z.array(PatternRuleSchema), guards: z.object({ libraries: z.record(z.string(), z.int().min(400).max(599)), name: z.string(), body: z.string() }) })
   .parse(JSON.parse(readFileSync(new URL('./rules.json', import.meta.url), 'utf8')));
 const GUARD_NAME = new RegExp(RULES.guards.name, 'i');
 const GUARD_BODY = new RegExp(RULES.guards.body);
@@ -59,6 +59,15 @@ function annotatedKind(node: Node): 'app' | 'router' | undefined {
   }
   if (type === undefined) return undefined;
   return /^(express\.)?(Application|Express)$/.test(type) ? 'app' : /^(express\.)?Router$/.test(type) ? 'router' : undefined;
+}
+
+// The status an auth library's middleware rejects with, when the expression builds one: jwt({...}) from express-jwt.
+function libraryStatus(expression: Node): number | undefined {
+  if (!Node.isCallExpression(expression)) return undefined;
+  let base = expression.getExpression();
+  while (Node.isPropertyAccessExpression(base) || Node.isCallExpression(base)) base = base.getExpression();
+  const module = Node.isIdentifier(base) ? importOf(base)?.module : undefined;
+  return module === undefined ? undefined : RULES.guards.libraries[module];
 }
 
 // A Zod schema (built from z, or derived from another schema) or a class-validator DTO.
@@ -280,10 +289,23 @@ function extract({ facts, files, read, resolver, graph, guards }: ExtractContext
       return;
     }
     const declaration = resolver.declaration(node, env);
+    // An auth library's guard written into the route (passport.authenticate('jwt')): one guard per distinct call.
+    const inline = declaration === undefined ? libraryStatus(node) : undefined;
+    if (inline !== undefined) {
+      const name = node.getText().replace(/\s+/g, ' ');
+      const owner = graph.add(`library-guard:${name}`, { kind: 'guard', name, ...resolver.where(node), attrs: { name } });
+      graph.edge(route, owner, 'guarded-by');
+      graph.edge(owner, graph.add(`${owner}#${inline}`, { kind: 'response', name: `${name}#${inline}`, ...resolver.where(node), attrs: { status: inline, fields: [] } }), 'responds-with');
+      return;
+    }
     if (declaration === undefined) return; // library middleware: express.json(), cors(), helmet()
     const where = resolver.where(declaration);
     const base = qualifiedName(declaration) ?? `inline ${where.file}:${where.line}`;
-    const guard = guards.includes(base) || GUARD_NAME.test(base) || GUARD_BODY.test(declaration.getText());
+    // What builds it: the initializer of const isAuth = jwt({...}) or of { required: jwt({...}) }.
+    const fn = Node.isVariableDeclaration(declaration) || Node.isPropertyAssignment(declaration) ? declaration.getInitializer() : declaration;
+    // jwt({ credentialsRequired: false }) lets a request without a token through: middleware, not a guard.
+    const optional = fn !== undefined && libraryStatus(fn) !== undefined && /\bcredentialsRequired\s*:\s*false\b/.test(fn.getText());
+    const guard = !optional && (guards.includes(base) || GUARD_NAME.test(base) || GUARD_BODY.test(declaration.getText()));
     // A guard made by a call is one guard per argument, requireRole('admin'): the role is what a test needs.
     const args = guard && Node.isCallExpression(node) ? node.getArguments().map((arg) => resolver.string(arg, env)) : [];
     const fixed = args.length > 0 && args.every((arg) => arg !== undefined) ? (args as string[]) : [];
@@ -293,8 +315,14 @@ function extract({ facts, files, read, resolver, graph, guards }: ExtractContext
     if (!responded.has(owner)) {
       responded.add(owner);
       // What it answers when it stops the request (401, 403, 400): the middleware itself, or the one a factory returns.
-      const fn = Node.isVariableDeclaration(declaration) ? declaration.getInitializer() : declaration;
       for (const inner of fn === undefined ? [] : [fn, ...fn.getDescendants()].filter((each) => isFunctionLike(each))) addResponses(owner, name, inner);
+      // Built by an auth library (jwt({...}), passport.authenticate(...)): the library sends the rejection, so its
+      // status comes from the rules' list of libraries, cited at the code that builds it. An optional one still
+      // rejects a token that is there but invalid.
+      const status = fn !== undefined ? libraryStatus(fn) : undefined;
+      if (status !== undefined) {
+        graph.edge(owner, graph.add(`${owner}#${status}`, { kind: 'response', name: `${name}#${status}`, ...where, attrs: { status, fields: [] } }), 'responds-with');
+      }
     }
     if (Node.isCallExpression(node)) for (const arg of node.getArguments()) addSchema(route, arg, env); // validate(schema)
   };

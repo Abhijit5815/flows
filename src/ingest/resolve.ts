@@ -192,6 +192,11 @@ export class Resolver {
     if (Node.isParameterDeclaration(declaration)) return this.parameterValues(declaration, depth);
     if (Node.isBindingElement(declaration)) return this.destructuredValues(declaration, env, depth);
     if (Node.isExportAssignment(declaration)) return this.values(declaration.getExpression(), env, depth + 1);
+    // A default import named again ({ isAuth } after import isAuth from './isAuth'): what that file exports.
+    if (Node.isImportClause(declaration)) {
+      const exported = declaration.getDefaultImport()?.getSymbol()?.getAliasedSymbol()?.getDeclarations()[0];
+      if (exported !== undefined && exported !== declaration) return this.declarationValues(exported, env, depth + 1);
+    }
     return [declaration];
   }
 

@@ -116,3 +116,35 @@ test('chained mounts, default exports and an app passed in by type are all follo
   assert.deepEqual(graph?.nodes.flatMap((node) => (node.kind === 'route' ? [`${node.attrs.method} ${node.attrs.path}`] : [])).sort(), ['GET /api/v1/tags', 'POST /api/v1/users/login']);
   assert.deepEqual(coverage.unrecognised, []);
 });
+
+// From bulletproof-nodejs: a guard built by an auth library and re-exported through an object, and passport inline.
+// The library sends the 401, so it comes from the rules' list of auth libraries, cited where the guard is built.
+test('guards built by an auth library are guards, with the status the library rejects with', async () => {
+  const dir = join(tmp, 'library-guards');
+  const write = (file: string, text: string) => {
+    mkdirSync(join(dir, file, '..'), { recursive: true });
+    writeFileSync(join(dir, file), text);
+  };
+  write('package.json', JSON.stringify({ dependencies: { express: '^4.19.2', 'express-jwt': '^8.4.1', passport: '^0.7.0' } }));
+  write('src/is-auth.ts', "import { expressjwt } from 'express-jwt';\nconst isAuth = expressjwt({ secret: 's', algorithms: ['HS256'] });\nexport default isAuth;\n");
+  write('src/auth.ts', "import { expressjwt as jwt } from 'express-jwt';\nexport default { optional: jwt({ secret: 's', algorithms: ['HS256'], credentialsRequired: false }) };\n");
+  write('src/middlewares.ts', "import isAuth from './is-auth';\nexport default { isAuth };\n");
+  write(
+    'src/server.ts',
+    "import express from 'express';\nimport passport from 'passport';\nimport middlewares from './middlewares';\nimport auth from './auth';\nconst app = express();\napp.get('/me', middlewares.isAuth, (req, res) => { res.json({ me: 1 }); });\napp.get('/articles', auth.optional, (req, res) => { res.json({ articles: [] }); });\napp.get('/feed', passport.authenticate('jwt', { session: false }), (req, res) => { res.json({ items: [] }); });\napp.listen(3000);\n",
+  );
+  const project = tempProject(join(tmp, 'library'));
+  const { graph } = await scanRepo(project, addRepo(project, dir, 'api').config.repos[0]);
+  assert.ok(graph);
+  const guarded = (route: string) =>
+    graph.edges.filter((edge) => edge.from === `api:route:${route}` && edge.kind === 'guarded-by').flatMap((edge) => {
+      const statuses = graph.edges.filter((other) => other.from === edge.to && other.kind === 'responds-with').map((other) => graph.nodes.find((node) => node.id === other.to));
+      return statuses.map((node) => `${edge.to} ${node?.kind === 'response' ? node.attrs.status : ''} @ ${node?.file}:${node?.line}`);
+    });
+  assert.deepEqual(guarded('GET /me'), ['api:guard:isAuth 401 @ src/is-auth.ts:2']);
+  assert.deepEqual(guarded('GET /feed').map((line) => line.replace(/ @ .*/, '')).map((line) => line.split(' ').at(-1)), ['401']);
+  // credentialsRequired: false lets a request with no token through: not a guard, but an invalid token still gets 401.
+  assert.deepEqual(guarded('GET /articles'), []);
+  const optional = graph.edges.find((edge) => edge.from === 'api:route:GET /articles' && edge.kind === 'uses');
+  assert.deepEqual(graph.edges.filter((edge) => edge.from === optional?.to && edge.kind === 'responds-with').map((edge) => edge.to), ['api:response:optional#401']);
+});

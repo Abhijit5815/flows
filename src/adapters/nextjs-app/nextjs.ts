@@ -223,6 +223,20 @@ function extract({ files, facts, resolver, graph }: ExtractContext): Unrecognise
       return [...(value === undefined ? [] : [value]), ...nested.flatMap((component) => fieldsIn(component, seen))];
     });
 
+  // The prop a component's own attribute passes on: action={action} from ({ action }) or props.action from (props).
+  const propOf = (value: Node, fn: Node): string | undefined => {
+    const name = Node.isPropertyAccessExpression(value) ? value.getExpression() : value;
+    const definition = Node.isIdentifier(name) ? name.getDefinitionNodes()[0] : undefined;
+    if (Node.isBindingElement(definition) && definition.getFirstAncestor((ancestor) => Node.isParameterDeclaration(ancestor))?.getParent() === fn) {
+      return definition.getPropertyNameNode()?.getText() ?? definition.getName();
+    }
+    return Node.isParameterDeclaration(definition) && definition.getParent() === fn && Node.isPropertyAccessExpression(value) ? value.getName() : undefined;
+  };
+
+  // A form component that takes what it runs as a prop (<Form action={register}>): a form of its own on each page that
+  // uses it, with the action that page passes, so two pages sharing it are two flows.
+  const propForms = new Map<Node, { props: string[]; fields: string[] }[]>();
+
   // Walks one page, layout or component: what it renders, its forms and click actions, and what it fetches.
   const visited = new Set<string>();
   const visit = (key: string, fn: Node, owner: string): void => {
@@ -244,6 +258,15 @@ function extract({ files, facts, resolver, graph }: ExtractContext): Unrecognise
       if (tag === 'form' && Node.isJsxOpeningElement(element)) {
         const body = element.getParentOrThrow();
         const fields = [...new Set(fieldsIn(body, new Set()))];
+        const props = ['action', 'onSubmit'].flatMap((name) => {
+          const value = attribute(element, name);
+          const prop = value === undefined ? undefined : propOf(value, fn);
+          return prop === undefined ? [] : [prop];
+        });
+        if (props.length > 0) {
+          propForms.set(fn, [...(propForms.get(fn) ?? []), { props, fields }]);
+          continue;
+        }
         forms += 1;
         const name = `${owner}#form${forms > 1 ? forms : ''}`;
         const form = graph.add(keyOf(element), { kind: 'form', name, ...resolver.where(element), attrs: { fields } });
@@ -273,6 +296,22 @@ function extract({ files, facts, resolver, graph }: ExtractContext): Unrecognise
         if (!visited.has(child)) {
           visited.add(child);
           visit(child, component, name);
+        }
+        for (const shared of propForms.get(component) ?? []) {
+          const targets = shared.props.flatMap((prop) => {
+            const value = attribute(element, prop);
+            return value === undefined ? [] : actionTargets(value).map((target) => ({ target, via: prop }));
+          });
+          if (targets.length === 0) continue;
+          forms += 1;
+          const body = Node.isJsxOpeningElement(element) ? element.getParentOrThrow() : element;
+          const fields = [...new Set([...shared.fields, ...fieldsIn(body, new Set())])];
+          const form = graph.add(`${keyOf(element)}#form`, { kind: 'form', name: `${owner}#form${forms > 1 ? forms : ''}`, ...resolver.where(element), attrs: { fields } });
+          graph.edge(key, form, 'contains');
+          for (const { target, via } of targets) {
+            handlers.add(target);
+            graph.edge(form, addAction(target, inline(via)), 'submits');
+          }
         }
       }
     }

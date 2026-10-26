@@ -1,11 +1,14 @@
 import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { addRepo } from '../../config/project.ts';
 import { scanRepo } from '../../ingest/pipeline.ts';
+import { candidates } from '../../engine/candidates.ts';
+import { addLoginSubflows } from '../../engine/subflows.ts';
+import { lookup } from '../../graph/lookup.ts';
 import { tempProject } from '../../shared/testing/project.ts';
 import { matcherRegex, nextAppAdapter, routePath } from './nextjs.ts';
 import { uiViews } from './views.ts';
@@ -58,4 +61,34 @@ test('middleware matchers: path patterns and regular expressions', () => {
   assert.ok(!matcherRegex('/cart').test('/cart/x'));
   assert.ok(matcherRegex('/((?!api|_next/static|_next/image|.*\\.png$).*)').test('/dashboard/invoices'));
   assert.ok(!matcherRegex('/((?!api|_next/static|_next/image|.*\\.png$).*)').test('/api/x'));
+});
+
+// From an app Flows had never seen (nextjs-postgres-auth-starter): one <Form> component, its action passed in by each
+// page. Each page gets a form flow of its own, and the one on /login is the Log-in step even though both are "Login".
+test('a form component used on two pages with different actions is two flows', async () => {
+  const dir = join(tmp, 'shared-form');
+  const write = (file: string, text: string) => {
+    mkdirSync(join(dir, file, '..'), { recursive: true });
+    writeFileSync(join(dir, file), text);
+  };
+  write('package.json', JSON.stringify({ dependencies: { next: '^14.2.5' } }));
+  write('tsconfig.json', JSON.stringify({ compilerOptions: { jsx: 'preserve', strict: true } }));
+  write('app/form.tsx', "export function Form({ action, children }: { action: any; children: React.ReactNode }) {\n  return <form action={action}><input name=\"email\" /><input name=\"password\" />{children}</form>;\n}\n");
+  write('app/login/page.tsx', "import { Form } from '../form';\nexport default function Login() {\n  return <Form action={async (data: FormData) => { 'use server'; await fetch('/api/login', { method: 'POST' }); }}><button>Sign in</button></Form>;\n}\n");
+  write('app/register/page.tsx', "import { redirect } from 'next/navigation';\nimport { Form } from '../form';\nexport default function Login() {\n  async function register(data: FormData) {\n    'use server';\n    if (!data.get('email')) return 'Enter an email';\n    redirect('/login');\n  }\n  return <Form action={register}><input name=\"name\" /></Form>;\n}\n");
+  write('app/account/page.tsx', "export default function Account() {\n  return <p>Account</p>;\n}\n");
+  write('middleware.ts', "import { NextResponse } from 'next/server';\nexport function middleware() { return NextResponse.next(); }\nexport const config = { matcher: ['/account'] };\n");
+  const project = tempProject(join(tmp, 'shared'));
+  const { graph } = await scanRepo(project, addRepo(project, dir, 'web').config.repos[0]);
+  assert.ok(graph);
+  const nodes = lookup(graph);
+  const { flows } = addLoginSubflows(candidates(graph).flows, nodes);
+  const submits = flows.filter((flow) => flow.steps.some((step) => step.claim.startsWith('Fill in and submit')));
+  assert.equal(submits.length, 2);
+  const register = submits.find((flow) => flow.steps.some((step) => step.claim.includes('which runs register')));
+  assert.ok(register !== undefined);
+  const submit = register.steps.find((step) => step.claim.includes('which runs register'));
+  assert.deepEqual([submit?.check?.kind === 'ui' ? submit.check.page : undefined, submit?.errors?.map((error) => error.message), submit?.claim.includes('(email, password, name)')], ['/login', ['Enter an email'], true]);
+  const login = submits.find((flow) => flow !== register);
+  assert.deepEqual(flows.find((flow) => flow.steps[0].kind === 'subflow')?.steps[0].subflow_ref, login?.id, 'the Log-in step is the form on /login');
 });

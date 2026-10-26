@@ -96,3 +96,23 @@ app.listen(3000);
     [false, false, false],
   );
 });
+
+// Patterns from apps Flows had never seen (RealWorld, bulletproof-nodejs): chained mounts, a router exported as an
+// expression, routes registered by a default-exported function, and the app handed in through require().
+test('chained mounts, default exports and an app passed in by type are all followed', async () => {
+  const dir = join(tmp, 'mounts-app');
+  const write = (file: string, text: string) => {
+    mkdirSync(join(dir, file, '..'), { recursive: true });
+    writeFileSync(join(dir, file), text);
+  };
+  write('package.json', JSON.stringify({ dependencies: { express: '^4.19.2' } }));
+  write('src/app.ts', "import express from 'express';\nconst app = express();\nrequire('./loader').default({ app });\napp.listen(3000);\n");
+  write('src/loader.ts', "import express from 'express';\nimport routes from './routes';\nexport default ({ app }: { app: express.Application }) => {\n  app.use('/api', routes);\n};\n");
+  write('src/routes.ts', "import { Router } from 'express';\nimport tags from './tags';\nimport users from './users';\nconst api = Router().use(tags);\nusers(api);\nexport default Router().use('/v1', api);\n");
+  write('src/tags.ts', "import { Router } from 'express';\nconst router = Router();\nrouter.get('/tags', (req, res) => { res.json({ tags: [] }); });\nexport default router;\n");
+  write('src/users.ts', "import { Router } from 'express';\nconst route = Router();\nexport default (app: Router) => {\n  app.use('/users', route);\n  route.post('/login', (req, res) => { res.json({ token: 't' }); });\n};\n");
+  const project = tempProject(join(tmp, 'mounts'));
+  const { graph, coverage } = await scanRepo(project, addRepo(project, dir, 'api').config.repos[0]);
+  assert.deepEqual(graph?.nodes.flatMap((node) => (node.kind === 'route' ? [`${node.attrs.method} ${node.attrs.path}`] : [])).sort(), ['GET /api/v1/tags', 'POST /api/v1/users/login']);
+  assert.deepEqual(coverage.unrecognised, []);
+});

@@ -45,6 +45,22 @@ function routerKind(node: Node): 'app' | 'router' | undefined {
   return undefined;
 }
 
+// A parameter whose value Flows can't follow (the app handed in through require()), named by its type annotation:
+// app: express.Application is the app, route: Router a router.
+function annotatedKind(node: Node): 'app' | 'router' | undefined {
+  let type: string | undefined;
+  if (Node.isParameterDeclaration(node)) type = node.getTypeNode()?.getText();
+  if (Node.isBindingElement(node)) {
+    const parameter = node.getFirstAncestor((ancestor) => Node.isParameterDeclaration(ancestor));
+    const literal = Node.isParameterDeclaration(parameter) ? parameter.getTypeNode() : undefined;
+    const name = node.getPropertyNameNode()?.getText() ?? node.getName();
+    const member = Node.isTypeLiteral(literal) ? literal.getProperty(name) : undefined;
+    type = Node.isPropertySignature(member) ? member.getTypeNode()?.getText() : undefined;
+  }
+  if (type === undefined) return undefined;
+  return /^(express\.)?(Application|Express)$/.test(type) ? 'app' : /^(express\.)?Router$/.test(type) ? 'router' : undefined;
+}
+
 // A Zod schema (built from z, or derived from another schema) or a class-validator DTO.
 function isSchema(declaration: Node, depth = 0): boolean {
   if (Node.isClassDeclaration(declaration)) return declaration.getProperties().some((property) => property.getDecorators().length > 0);
@@ -128,13 +144,29 @@ function extract({ facts, files, read, resolver, graph, guards }: ExtractContext
   const registrations: Registration[] = [];
   const mounts: Mount[] = [];
 
-  const routersOf = (expression: Node, env: Env): string[] =>
-    resolver.values(expression, env).flatMap((value) => {
-      const kind = routerKind(value);
+  // use() and the route methods return the router itself, so Router().use(a).use(b) is the Router() at its start.
+  const chained = (node: Node): Node | undefined => {
+    const callee = Node.isCallExpression(node) ? node.getExpression() : undefined;
+    return Node.isPropertyAccessExpression(callee) && (callee.getName() === 'use' || ROUTE_METHODS.has(callee.getName())) ? callee.getExpression() : undefined;
+  };
+  const routersOf = (expression: Node, env: Env, depth = 0): string[] => {
+    const start = chained(expression);
+    if (start !== undefined) return depth < 20 ? routersOf(start, env, depth + 1) : [];
+    // Router() itself: resolving the call would look for what it returns, which is library code.
+    const own = routerKind(expression);
+    if (own !== undefined) {
+      kinds.set(keyOf(expression), own);
+      return [keyOf(expression)];
+    }
+    return resolver.values(expression, env).flatMap((value) => {
+      const inner = value === expression ? undefined : chained(value);
+      if (inner !== undefined) return depth < 20 ? routersOf(inner, env, depth + 1) : [];
+      const kind = routerKind(value) ?? annotatedKind(value);
       if (kind === undefined) return [];
       kinds.set(keyOf(value), kind);
       return [keyOf(value)];
     });
+  };
 
   // use(path?, ...middleware): the first argument is a path unless it is a function, a router or a call.
   const isPath = (arg: Node, env: Env): boolean => {

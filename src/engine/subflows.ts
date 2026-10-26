@@ -25,7 +25,13 @@ export function isLogin(flow: Flow, graph: Lookup): boolean {
 export function addLoginSubflows(flows: readonly Flow[], graph: Lookup): { flows: Flow[]; notes: string[] } {
   const guarded = flows.filter((flow) => guardsOf(flow, graph).length > 0);
   if (guarded.length === 0) return { flows: [...flows], notes: [] };
-  const logins = flows.filter((flow) => isLogin(flow, graph) && guardsOf(flow, graph).length === 0);
+  const candidates = flows.filter((flow) => isLogin(flow, graph) && guardsOf(flow, graph).length === 0);
+  // Several read like it (a sign-up page whose component is also named Login): the one on a /login page wins.
+  const onLoginPage = candidates.filter((flow) => {
+    const { entry } = shape(flow, graph);
+    return entry?.kind === 'page' && LOGIN_PATH.test(entry.attrs.path);
+  });
+  const logins = candidates.length > 1 && onLoginPage.length === 1 ? onLoginPage : candidates;
   if (logins.length !== 1) {
     const found = logins.length === 0 ? 'no login flow was found' : `${logins.length} flows look like logging in (${logins.map((flow) => flow.id).join(', ')})`;
     return { flows: [...flows], notes: [`${guarded.length} flow(s) start behind a guard, but ${found}, so they get no Log-in step`] };

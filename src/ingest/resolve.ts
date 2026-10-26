@@ -145,7 +145,9 @@ export class Resolver {
     if (depth > MAX_DEPTH) return [];
     const node = unwrap(expression);
     if (Node.isIdentifier(node)) {
-      const definition = node.getDefinitionNodes()[0];
+      // An import of `export default <expression>` has no named definition; its symbol leads to the export.
+      const exported = node.getSymbol()?.getAliasedSymbol()?.getDeclarations()[0];
+      const definition = node.getDefinitionNodes()[0] ?? (Node.isExportAssignment(exported) ? exported : undefined);
       return definition === undefined ? [node] : this.declarationValues(definition, env, depth + 1);
     }
     if (node.getKind() === SyntaxKind.ThisKeyword) return [thisOwner(node) ?? node];
@@ -257,17 +259,28 @@ export class Resolver {
   // Calls of a function, method or constructor, across the repo. Files that mention its name are loaded first,
   // because references are only found in loaded files.
   callSites(fn: Node): (CallExpression | NewExpression)[] {
+    const callOf = (reference: Node): (CallExpression | NewExpression)[] => {
+      const parent = reference.getParent();
+      const callee = Node.isPropertyAccessExpression(parent) && parent.getNameNode() === reference ? parent : reference;
+      const call = callee.getParent();
+      return (Node.isCallExpression(call) || Node.isNewExpression(call)) && call.getExpression() === callee ? [call] : [];
+    };
+    // export default (app) => {...} has no name: its callers are the calls of each file's default import of it.
+    if (Node.isExportAssignment(fn.getParent())) {
+      const own = fn.getSourceFile();
+      const stem = own.getBaseNameWithoutExtension();
+      for (const [path, text] of this.sources) if (!this.loaded.has(path) && text.includes(stem)) this.file(path);
+      return own.getReferencingNodesInOtherSourceFiles().flatMap((node) => {
+        const name = Node.isImportDeclaration(node) ? node.getDefaultImport() : undefined;
+        return name === undefined ? [] : name.findReferencesAsNodes().flatMap(callOf);
+      });
+    }
     const target = Node.isConstructorDeclaration(fn) ? fn.getParent() : holderOf(fn);
     if (!Node.isReferenceFindable(target) || !Node.hasName(target)) return [];
     const name = target.getName();
     const word = new RegExp(`\\b${name.replace(/[$]/g, '\\$')}\\b`);
     for (const [path, text] of this.sources) if (!this.loaded.has(path) && word.test(text)) this.file(path);
-    return target.findReferencesAsNodes().flatMap((reference) => {
-      const parent = reference.getParent();
-      const callee = Node.isPropertyAccessExpression(parent) && parent.getNameNode() === reference ? parent : reference;
-      const call = callee.getParent();
-      return (Node.isCallExpression(call) || Node.isNewExpression(call)) && call.getExpression() === callee ? [call] : [];
-    });
+    return target.findReferencesAsNodes().flatMap(callOf);
   }
 
   // Binds a function's parameters to one call's arguments; a missing argument takes the default, or stays unknown.

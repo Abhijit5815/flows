@@ -48,7 +48,9 @@ export async function buildFlows(graph: Graph, human: HumanInput, deps: EngineDe
   const nodes = lookup(graph);
   const record = (started: number, stage: Extract<TraceEvent, { kind: 'verdict' }>['stage'], subject: string, outcome: string, reasons: string[]) =>
     deps.trace.record({ ...eventBase(started), kind: 'verdict', stage, subject, outcome, reasons });
-  const { overrides, added } = human.edits;
+  const { overrides } = human.edits;
+  // A folder registered as both web and api shares one .flows/: each role takes only the flows of its own kind.
+  const added = human.edits.added.filter((flow) => (flow.kind === 'ui') === (graph.role === 'web'));
 
   const found = candidates(graph);
   const generated = addLoginSubflows(found.flows, nodes);

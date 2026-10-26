@@ -128,6 +128,19 @@ test("a reviewer's wrong verdict rejects the flow, and flows that needed it as t
   assert.deepEqual([status('ui-e68b64da')?.confidence, status('ui-e68b64da')?.enabled], [1, true]);
 });
 
+test('a folder registered as both web and api: a person-made UI flow stays on the web side only', async () => {
+  const project = tempProject(join(tmp, 'both'));
+  const api = (await scanRepo(project, addRepo(project, join(fixtures, 'express-basic'), 'api').config.repos[0])).graph;
+  assert.ok(api);
+  const web = await nextBasic();
+  const own = { ...(await buildFlows(web, none, deps(fakeLlm()))).flows.find((flow) => flow.kind === 'ui')!, id: 'ui-person-made' };
+  const shared: HumanInput = { verdicts: new Map(), edits: { schema_version: 0, overrides: {}, added: [own] } };
+  const onWeb = await buildFlows(web, shared, deps(fakeLlm()));
+  assert.ok(onWeb.flows.some((flow) => flow.id === 'ui-person-made'));
+  const onApi = await buildFlows(api, shared, deps(fakeLlm()));
+  assert.ok(!JSON.stringify(onApi).includes('ui-person-made'), 'not among the api flows, nor in their rejected list');
+});
+
 test('with the LLM down, the run goes on from source alone and says so once', async () => {
   const offs: string[] = [];
   const gateway = fakeLlm(true);

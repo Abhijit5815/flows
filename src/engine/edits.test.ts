@@ -2,7 +2,7 @@
 // their verdicts stand.
 import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { cpSync, mkdtempSync, rmSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -11,12 +11,12 @@ import type { Decider } from '../decider/decider.ts';
 import type { Graph } from '../graph/schema.ts';
 import { scanRepo } from '../ingest/pipeline.ts';
 import type { Flow } from '../model/flow.ts';
-import { addRule, today } from '../rules/learned.ts';
+import { addRule, loadRules, now, rulesFile } from '../rules/learned.ts';
 import { tempProject } from '../shared/testing/project.ts';
 import { MemoryTraceSink } from '../trace/sink.ts';
 import { runClaim } from './describe.ts';
-import { loadEdits, saveAdded, saveOverride } from './edits.ts';
-import { refreshFlows, type EngineDeps } from './engine.ts';
+import { editsFile, loadEdits, saveAdded, saveOverride } from './edits.ts';
+import { refreshFlows, verdictsOf, type EngineDeps } from './engine.ts';
 import { OptionalLlm } from './llm.ts';
 import type { FlowSet } from './store.ts';
 
@@ -92,8 +92,29 @@ test('an added flow keeps its own name, and its subflow step may run any flow of
 
 test('a "never" verdict rejects the flow at every scan', async () => {
   const { dir, scan } = await setup('never');
-  addRule(dir, { type: 'feedback', flow: 'ui-e68b64da', kind: 'never', added: today() });
+  addRule(dir, { type: 'feedback', flow: 'ui-e68b64da', kind: 'never', added: now() });
   const set = await scan();
   assert.deepEqual([flowIn(set, 'ui-e68b64da').status, flowIn(set, 'ui-e68b64da').enabled], ['rejected', false]);
   assert.ok(set.reasons['ui-e68b64da'].includes('a reviewer said never to suggest it again'));
+});
+
+// Two people review on their own branches; git's union merge keeps both sides' lines, ours first, whatever their times.
+test('after a union merge, both people\'s edits to one flow stay and the later one wins a field both set', () => {
+  const dir = join(tmp, 'merged');
+  mkdirSync(dir);
+  const line = (value: unknown) => `${JSON.stringify(value)}\n`;
+  const base = line({ type: 'override', id: 'ui-1', patch: { name: 'Base' }, version: 2, edited: '2026-10-26T09:00:00.000Z' });
+  const alice = line({ type: 'override', id: 'ui-1', patch: { name: 'Alice', priority: 'high' }, version: 3, edited: '2026-10-26T10:00:00.000Z' });
+  const bob = line({ type: 'override', id: 'ui-1', patch: { name: 'Bob', tags: ['smoke'] }, version: 3, edited: '2026-10-26T11:00:00.000Z' });
+  mkdirSync(join(dir, '.flows'));
+  writeFileSync(editsFile(dir), base + bob + alice);
+  const { name, priority, tags, version } = loadEdits(dir).overrides['ui-1'];
+  assert.deepEqual({ name, priority, tags, version }, { name: 'Bob', priority: 'high', tags: ['smoke'], version: 3 });
+  assert.equal(saveOverride(dir, 'ui-1', { enabled: false }, 3).version, 4);
+
+  const verdict = (kind: string, added: string) => line({ type: 'feedback', flow: 'ui-1', kind, added });
+  writeFileSync(rulesFile(dir), verdict('wrong', '2026-10-26T11:00:00.000Z') + verdict('correct', '2026-10-26T10:00:00.000Z'));
+  assert.equal(verdictsOf(loadRules(dir)).get('ui-1'), 'wrong', 'the later verdict wins');
+  addRule(dir, { type: 'exclude', node: 'api:route:GET /health', added: now() });
+  assert.equal(readFileSync(join(dir, '.flows', '.gitattributes'), 'utf8'), '*.jsonl merge=union\n');
 });

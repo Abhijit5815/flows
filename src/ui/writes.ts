@@ -8,7 +8,7 @@ import type { Graph } from '../graph/schema.ts';
 import { loadGraph } from '../graph/store.ts';
 import { CategorySchema } from '../model/category.ts';
 import { FlowSchema } from '../model/flow.ts';
-import { addRule, FEEDBACK_KINDS, today } from '../rules/learned.ts';
+import { addRule, FEEDBACK_KINDS, now } from '../rules/learned.ts';
 import { ConfigError, FlowsError } from '../shared/errors.ts';
 import { parseOrThrow } from '../shared/validate.ts';
 import { drawFlow } from './propose.ts';
@@ -73,7 +73,7 @@ export function writes(start: Project, deps: EngineDeps): Writes {
     saveOverride(dirOf(repo), id, patch, versionOf(repo, id));
   };
   const verdict = (repo: Repo, flow: string, kind: (typeof FEEDBACK_KINDS)[number], extra: { step?: string; comment?: string; place?: string } = {}) =>
-    addRule(dirOf(repo), { type: 'feedback', flow, kind, ...extra, added: today() });
+    addRule(dirOf(repo), { type: 'feedback', flow, kind, ...extra, added: now() });
 
   const graphOf = (key: string): { repo: Repo; graph: Graph } => {
     const repo = repoOf(key);

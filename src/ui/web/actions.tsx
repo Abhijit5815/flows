@@ -81,7 +81,7 @@ export function Review({ item, onView }: { item: Item; onView: OnView }) {
           {notes.map((feedback, i) => (
             <li key={`${feedback.added}:${i}`}>
               <span className="muted">
-                {feedback.kind === 'missing-step' ? 'Missing step' : 'Comment'}, {feedback.added}
+                {feedback.kind === 'missing-step' ? 'Missing step' : 'Comment'}, {feedback.added.slice(0, 10)}
                 {feedback.place === undefined ? '' : ` at ${feedback.place}`}:
               </span>{' '}
               {feedback.comment}

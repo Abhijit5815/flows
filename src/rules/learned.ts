@@ -3,12 +3,13 @@ import { join } from 'node:path';
 import { z } from 'zod';
 import { PatternRuleSchema } from '../ingest/match.ts';
 import { ConfigError } from '../shared/errors.ts';
-import { writeJsonAtomic } from '../shared/json-file.ts';
+import { appendJsonLine, readJsonLines } from '../shared/json-file.ts';
 import { parseOrThrow } from '../shared/validate.ts';
 
 // PLAN.md §4 Rule { scope, pattern | exclusion }: what the user taught Flows about one repo. Saved in the repo
-// itself (<repo>/.flows/rules.json), so it is reviewed and versioned with the code it describes.
-const Added = z.iso.date();
+// itself (<repo>/.flows/rules.jsonl, one rule per line), so it is reviewed and versioned with the code it describes,
+// and two people's rules merge without a conflict. A date alone is from the older rules.json.
+const Added = z.union([z.iso.datetime(), z.iso.date()]);
 const Place = z.string().regex(/^.+:[1-9]\d*$/, 'a place looks like "src/server.ts:17"');
 
 export const FEEDBACK_KINDS = ['correct', 'wrong', 'never', 'missing-step', 'comment'] as const;
@@ -54,12 +55,18 @@ export type MatchRule = Extract<LearnedRule, { type: 'match' }>;
 
 const RulesFileSchema = z.object({ schema_version: z.literal(0), rules: z.array(LearnedRuleSchema) });
 
-export const rulesFile = (repoDir: string): string => join(repoDir, '.flows', 'rules.json');
-export const today = (): string => new Date().toISOString().slice(0, 10);
+export const rulesFile = (repoDir: string): string => join(repoDir, '.flows', 'rules.jsonl');
+const legacyRulesFile = (repoDir: string): string => join(repoDir, '.flows', 'rules.json');
+export const now = (): string => new Date().toISOString();
 
 // A broken rules file stops the scan with a message rather than being skipped: it is the user's own config.
+// Oldest first, by when each was added, so the latest verdict wins however a merge ordered the lines.
 export function loadRules(repoDir: string): LearnedRule[] {
-  const file = rulesFile(repoDir);
+  return [...legacyRules(repoDir), ...readJsonLines(rulesFile(repoDir), LearnedRuleSchema)].sort((a, b) => (a.added < b.added ? -1 : a.added > b.added ? 1 : 0));
+}
+
+function legacyRules(repoDir: string): LearnedRule[] {
+  const file = legacyRulesFile(repoDir);
   if (!existsSync(file)) return [];
   let raw: unknown;
   try {
@@ -71,5 +78,5 @@ export function loadRules(repoDir: string): LearnedRule[] {
 }
 
 export function addRule(repoDir: string, rule: LearnedRule): void {
-  writeJsonAtomic(rulesFile(repoDir), { schema_version: 0, rules: [...loadRules(repoDir), LearnedRuleSchema.parse(rule)] }, 2);
+  appendJsonLine(rulesFile(repoDir), LearnedRuleSchema.parse(rule));
 }

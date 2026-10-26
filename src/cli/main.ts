@@ -37,7 +37,7 @@ import { walkInInspector } from '../live/walk.ts';
 import { answerJob, loadJobs } from '../llm/assistant.ts';
 import { createGateway } from '../llm/create.ts';
 import { draftRule } from '../rules/draft.ts';
-import { addRule, loadRules, rulesFile, today } from '../rules/learned.ts';
+import { addRule, loadRules, rulesFile, now } from '../rules/learned.ts';
 import { proposeRule } from '../rules/propose.ts';
 import { FlowsError } from '../shared/errors.ts';
 import { readCache, writeJsonAtomic } from '../shared/json-file.ts';
@@ -80,7 +80,7 @@ const USAGE = `usage: flows <command> [--project <dir>]
   rule exclude <node-id>                   leave a node out of every scan ("not a flow")
   rule draft --example <path:line>... [--save]   for code no adapter reads: the LLM drafts a rule, kept only if it
                                            reproduces the examples exactly
-  rule list                                the rules each repo has learned (<repo>/.flows/rules.json)
+  rule list                                the rules each repo has learned (<repo>/.flows/rules.jsonl)
   eval [--keys <dir>] [--samples <dir>]    recall and precision against hand-written answer keys (default: the
                                            sample apps), exiting 1 on any miss or extra; in a project folder also
                                            the Decider's accuracy, calibration and drift since its last refit
@@ -173,8 +173,11 @@ function engineDeps(project: Project, embedder: ReturnType<typeof createEmbeddin
   return {
     decider: createDecider(project, progress(), embedder, withLearned(loadBuiltInTasks(), learnedExamples(project))),
     grounding: createGrounding(project, progress()),
-    llm: new OptionalLlm(createGateway(project.config.llm, trace, jobsFile(project)), join(projectDataDir(project), 'llm-cache.json'), (reason) =>
-      console.log(`  the LLM is off for the rest of this scan, so names and unknown categories come from source: ${reason}`),
+    llm: new OptionalLlm(
+      createGateway(project.config.llm, trace, jobsFile(project)),
+      join(projectDataDir(project), 'llm-cache.json'),
+      (reason) => console.log(`  the LLM is off for the rest of this scan, so names and unknown categories come from source: ${reason}`),
+      join(project.root, '.flows', 'answers.jsonl'),
     ),
     trace,
     categories: categories(project.config),
@@ -331,7 +334,7 @@ function review(project: Project, id: string | undefined, verdict: string | unde
   if (id === undefined || (verdict !== 'correct' && verdict !== 'wrong' && verdict !== 'never')) throw new FlowsError('usage: flows review <flow-id> correct|wrong|never [--comment <text>]');
   const owners = [ownerOf(project, id)];
   const dir = resolve(project.root, owners[0].path);
-  addRule(dir, { type: 'feedback', flow: id, kind: verdict, ...(values.comment === undefined ? {} : { comment: values.comment }), added: today() });
+  addRule(dir, { type: 'feedback', flow: id, kind: verdict, ...(values.comment === undefined ? {} : { comment: values.comment }), added: now() });
   console.log(`${id} marked ${verdict} in ${rulesFile(dir)}; run "flows scan" to apply it`);
 }
 
@@ -453,7 +456,7 @@ async function rule(project: Project, action: string | undefined, args: string[]
       if (!args[0]) throw new FlowsError('usage: flows rule exclude <node-id>');
       const owners = project.config.repos.filter((repo) => loadGraph(project, repo)?.nodes.some((node) => node.id === args[0]) && (values.role === undefined || repo.role === values.role));
       if (owners.length !== 1) throw new FlowsError(owners.length === 0 ? `no scanned graph has ${args[0]}; run "flows scan" or check the id with "flows show"` : `${args[0]} is in more than one repo; add --role`);
-      addRule(resolve(project.root, owners[0].path), { type: 'exclude', node: args[0], added: today() });
+      addRule(resolve(project.root, owners[0].path), { type: 'exclude', node: args[0], added: now() });
       console.log(`${args[0]} will be left out of every scan of ${owners[0].path}; run "flows scan"`);
       return;
     }

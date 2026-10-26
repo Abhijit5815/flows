@@ -9,7 +9,7 @@ import type { Decider } from '../decider/decider.ts';
 import { loadBuiltInTasks } from '../decider/task.ts';
 import { lookup } from '../graph/lookup.ts';
 import { scanRepo } from '../ingest/pipeline.ts';
-import { addRule, today } from '../rules/learned.ts';
+import { addRule, now } from '../rules/learned.ts';
 import { tempProject } from '../shared/testing/project.ts';
 import { MemoryTraceSink } from '../trace/sink.ts';
 import { deciderText } from './describe.ts';
@@ -36,12 +36,12 @@ test("people's categories and correct verdicts become Decider examples; wrong an
   const [products, cart, account] = ['Open /products', 'Open /cart', 'Open /account'].map((name) => set.flows.find((flow) => flow.name === name));
   assert.ok(products && cart && account);
   saveOverride(fixture, products.id, { category: 'browse', enabled: true }, products.version);
-  addRule(fixture, { type: 'feedback', flow: cart.id, kind: 'wrong', added: today() });
-  addRule(fixture, { type: 'feedback', flow: account.id, kind: 'never', added: today() });
+  addRule(fixture, { type: 'feedback', flow: cart.id, kind: 'wrong', added: now() });
+  addRule(fixture, { type: 'feedback', flow: account.id, kind: 'never', added: now() });
   // The verdict counts once the scan after it has the flow enabled.
   const rebuilt = await buildFlows(graph, { verdicts: new Map([[products.id, 'correct' as const]]), edits: { schema_version: 0, overrides: { [products.id]: { category: 'browse', enabled: true, version: 2, edited: new Date().toISOString() } }, added: [] } }, deps);
   saveFlows(project, repo, rebuilt);
-  addRule(fixture, { type: 'feedback', flow: products.id, kind: 'correct', added: today() });
+  addRule(fixture, { type: 'feedback', flow: products.id, kind: 'correct', added: now() });
 
   const text = deciderText(products, lookup(graph));
   assert.deepEqual(learnedExamples(project), { 'flow-category': { browse: [text] }, 'destructive-risk': { safe: [text] } });

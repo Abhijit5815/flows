@@ -184,6 +184,6 @@ const loadGraphs = (project: Project) => project.config.repos.flatMap((repo) => 
   return graph === undefined ? [] : [{ repo, graph }];
 });
 
-// The corrections people made in the inspector, from every web repo's .flows/rules.json.
+// The corrections people made in the inspector, from every web repo's .flows/rules.jsonl.
 export const matchRules = (project: Project): MatchRule[] =>
   project.config.repos.filter((repo) => repo.role === 'web').flatMap((repo) => loadRules(resolve(project.root, repo.path)).flatMap((rule) => (rule.type === 'match' ? [rule] : [])));

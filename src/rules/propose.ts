@@ -10,7 +10,7 @@ import { stackOf } from '../ingest/detect.ts';
 import { languageOf } from '../ingest/match.ts';
 import { scanRepo } from '../ingest/pipeline.ts';
 import { FlowsError } from '../shared/errors.ts';
-import { today, type LearnedRule } from './learned.ts';
+import { now, type LearnedRule } from './learned.ts';
 
 export type Place = { file: string; line: number };
 export type Proposal = { rule: LearnedRule; finds: string[] };
@@ -51,7 +51,7 @@ export async function proposeRule(project: Project, repo: Repo, place: Place, ad
     // Pointing at a middleware means "this is an auth guard" (PLAN.md §14 expects one such correction).
     const middleware = here.find((node) => node.kind === 'middleware');
     if (middleware?.kind === 'middleware') {
-      const rule: LearnedRule = { type: 'guard', scope, name: middleware.attrs.name, example, added: today() };
+      const rule: LearnedRule = { type: 'guard', scope, name: middleware.attrs.name, example, added: now() };
       return { rule, finds: at(await scan([rule])).filter((node) => node.kind === 'guard').map((node) => node.id) };
     }
     if (here.length > 0) throw new FlowsError(`${example} is already in the graph: ${here.map((node) => node.id).join(', ')}`);
@@ -59,7 +59,7 @@ export async function proposeRule(project: Project, repo: Repo, place: Place, ad
     const ids = [...new Set(adapterFor(scope, repo.role, adapters).rules.map((rule) => rule.id))];
     for (const pattern of candidatePatterns(resolve(project.root, repo.path), place)) {
       for (const id of ids) {
-        const rule: LearnedRule = { type: 'pattern', scope, rule: { id, rule: { pattern } }, example, added: today() };
+        const rule: LearnedRule = { type: 'pattern', scope, rule: { id, rule: { pattern } }, example, added: now() };
         let nodes: GraphNode[];
         try {
           nodes = await scan([rule]);

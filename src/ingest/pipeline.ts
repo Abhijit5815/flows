@@ -59,7 +59,7 @@ export async function scanRepo(project: Project, repo: Repo, options: ScanOption
   const read = (path: string): string => readFileSync(join(dir, path), 'utf8');
   const sources = new Map(files.filter(isSource).map((path) => [path, read(path)]));
   const coverage: Coverage = { files: files.length, sources: sources.size, parsed: [], parseErrors: [], unrecognised: [], missed: [], embeddingSearch: false, excluded: [] };
-  // What the user taught Flows about this repo (<repo>/.flows/rules.json).
+  // What the user taught Flows about this repo (<repo>/.flows/rules.jsonl).
   const learned = [...loadRules(dir), ...(options.extraRules ?? [])];
   const produces = repo.role === 'api' ? 'route' : 'page';
   const generic = learned.filter((rule): rule is GenericRule => rule.type === 'generic' && rule.produces === produces);

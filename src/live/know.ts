@@ -4,7 +4,7 @@ import { label } from '../engine/describe.ts';
 import { loadFlows } from '../engine/store.ts';
 import type { Graph, GraphNode } from '../graph/schema.ts';
 import type { Flow } from '../model/flow.ts';
-import { addRule, today } from '../rules/learned.ts';
+import { addRule, now } from '../rules/learned.ts';
 import { LiveError } from '../shared/errors.ts';
 import { matchRules } from './crosscheck.ts';
 import { actionFor, formFor, indexOf, pagePattern, type SourceIndex } from './match.ts';
@@ -59,7 +59,7 @@ export function knowing(project: Project, graphs: readonly { repo: Repo; graph: 
       const { web, pattern } = place(facts.path);
       if (web === undefined) throw new LiveError('no web repo is registered, so there is no source to correct the match to');
       if (node !== null && web.index.nodes.node(node) === undefined) throw new LiveError(`${node} is not a node of ${web.repo.path}`);
-      addRule(resolve(project.root, web.repo.path), { type: 'match', page: pattern, selector: facts.selector, node, added: today() });
+      addRule(resolve(project.root, web.repo.path), { type: 'match', page: pattern, selector: facts.selector, node, added: now() });
     },
   };
 }

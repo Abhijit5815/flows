@@ -2,7 +2,7 @@ import { z } from 'zod';
 import type { LlmGateway } from '../llm/gateway.ts';
 import { HTTP_METHODS } from '../model/flow.ts';
 import { genericMatches } from './generic.ts';
-import { today, type GenericRule } from './learned.ts';
+import { now, type GenericRule } from './learned.ts';
 
 // PLAN.md Phase 2, unknown framework: the LLM drafts a rule from examples the user marks, and the rule is kept only
 // if it reproduces those examples exactly (it matches every one, matches nothing else, and reads a fixed path and,
@@ -26,7 +26,7 @@ export function checkDraft(draft: Draft, produces: 'route' | 'page', examples: r
     path: draft.path,
     ...(produces === 'route' && draft.method !== undefined ? { method: draft.method } : {}),
     examples: [...examples],
-    added: today(),
+    added: now(),
   };
   if (produces === 'route' && draft.method === undefined) return { accepted: false, reason: 'a route rule needs a method (a metavariable such as $METHOD, or a fixed method)' };
   let matches;

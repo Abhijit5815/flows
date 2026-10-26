@@ -107,6 +107,18 @@ test('a second scan asks the LLM nothing: replies are kept by prompt', async () 
   assert.deepEqual(second.calls, []);
 });
 
+test('with a shared answers file, a teammate on another model asks nothing and gets the same names', async () => {
+  const answers = join(tmp, 'shared', 'answers.jsonl');
+  const first = fakeLlm();
+  const shared = (gateway: LlmGateway) => ({ ...deps(gateway), llm: new OptionalLlm(gateway, join(tmp, `llm-${Math.random()}.json`), () => {}, answers) });
+  const mine = await buildFlows(await nextBasic(), none, shared(first));
+  assert.ok(first.calls.length > 0);
+  const theirs = { ...fakeLlm(), model: 'another' };
+  const again = await buildFlows(await nextBasic(), none, shared(theirs));
+  assert.deepEqual(theirs.calls, []);
+  assert.deepEqual(again.flows.map((flow) => flow.name), mine.flows.map((flow) => flow.name));
+});
+
 test("a reviewer's wrong verdict rejects the flow, and flows that needed it as their Log-in step lose that step", async () => {
   const verdicts = new Map<string, Verdict>([['ui-082b51bb', 'wrong'], ['ui-e68b64da', 'correct']]);
   const set = await buildFlows(await nextBasic(), { ...none, verdicts }, deps(fakeLlm()));

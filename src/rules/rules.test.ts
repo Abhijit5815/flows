@@ -13,7 +13,7 @@ import { liveSkip } from '../shared/testing/live.ts';
 import { tempProject } from '../shared/testing/project.ts';
 import { MemoryTraceSink } from '../trace/sink.ts';
 import { checkDraft, draftRule, type Draft } from './draft.ts';
-import { addRule, loadRules, today } from './learned.ts';
+import { addRule, loadRules, now } from './learned.ts';
 import { proposeRule } from './propose.ts';
 
 const fixtures = fileURLToPath(new URL('../../fixtures/apps/', import.meta.url));
@@ -84,7 +84,7 @@ test('a place already in the graph, or with nothing to find, gets no rule', asyn
 test('"not a flow": an excluded node stays out of every scan', async () => {
   const { project, dir } = copy('express-basic', 'exclude');
   const repo = addRepo(project, dir, 'api').config.repos[0];
-  addRule(dir, { type: 'exclude', node: 'api:route:GET /health', added: today() });
+  addRule(dir, { type: 'exclude', node: 'api:route:GET /health', added: now() });
   for (let scan = 0; scan < 2; scan++) {
     const { graph, coverage } = await scanRepo(project, repo);
     assert.ok(!routes(graph?.nodes).includes('api:route:GET /health'));

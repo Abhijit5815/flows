@@ -61,6 +61,16 @@ run the same commands in its root and register its web and API folders.
 
 `flows help` lists every command.
 
+## Working as a team
+
+Commit the `.flows/` folders. They hold everything people decided: reviews, edits, added flows, learned rules
+(`rules.jsonl`, `flows.jsonl` in each repo) and the LLM's flow names and categories (`answers.jsonl` in the project).
+So everyone who scans gets the same flows, and only the first scan of a change waits for the LLM.
+
+Each file gets one line per change and is only ever appended to. The `.gitattributes` Flows writes beside them
+tells git to keep both sides' lines, so two people reviewing at once never get a merge conflict. When they judge the
+same flow, the later judgment wins; when they edit different fields of one flow, both edits stay.
+
 ## AI and privacy
 
 Flows decides most things itself, with a small local embedding model. An LLM is used only for flow names,

@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { addRepo, categories, type Project } from '../config/project.ts';
 import type { Decider } from '../decider/decider.ts';
 import type { EmbeddingProvider } from '../embeddings/provider.ts';
+import { loadEdits } from '../engine/edits.ts';
 import { buildFlows } from '../engine/engine.ts';
 import { OptionalLlm } from '../engine/llm.ts';
 import { saveFlows } from '../engine/store.ts';
@@ -107,9 +108,8 @@ test("feedback, edits and bulk changes land in the repo's .flows/ and come back 
   assert.deepEqual([flowOf(view, 'ui-9076652b')?.name, flowOf(view, 'ui-9076652b')?.version, flowOf(view, 'ui-9076652b')?.steps[0].enabled], ['See the login page', 2, false]);
   view = (await (await post('/api/bulk', { flows: [{ repo, flow: 'ui-e68b64da' }, { repo, flow: 'ui-19a7cdd3' }], patch: { enabled: false } })).json()) as ProjectView;
   assert.deepEqual([flowOf(view, 'ui-e68b64da')?.enabled, flowOf(view, 'ui-19a7cdd3')?.enabled], [false, false]);
-  const saved = JSON.parse(readFileSync(join(fixture, '.flows', 'flows.json'), 'utf8'));
-  assert.deepEqual(Object.keys(saved.overrides).sort(), ['ui-19a7cdd3', 'ui-9076652b', 'ui-e68b64da']);
-  assert.match(readFileSync(join(fixture, '.flows', 'rules.json'), 'utf8'), /"kind": "wrong"/);
+  assert.deepEqual(Object.keys(loadEdits(fixture).overrides).sort(), ['ui-19a7cdd3', 'ui-9076652b', 'ui-e68b64da']);
+  assert.match(readFileSync(join(fixture, '.flows', 'rules.jsonl'), 'utf8'), /"kind":"wrong"/);
 });
 
 test('categories: rename, switch off and merge, with the fallback kept as it is', async () => {

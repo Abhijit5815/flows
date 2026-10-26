@@ -70,14 +70,44 @@ function checkProblem(step: Step, cited: GraphNode[], flow: Flow, ctx: VerifyCon
     const extra = (check.fields ?? []).filter((field) => !response.attrs.fields.includes(field));
     return extra.length > 0 ? `${response.id} has no field ${extra.join(', ')}` : undefined;
   }
-  if (check.page !== undefined && !nodes.some((node) => node.kind === 'page' && label(node) === check.page && cited.some((own) => own.id === node.id))) {
-    return `the step does not open ${check.page}`;
-  }
+  // A page the step opens, or one an action the step runs redirects to.
+  const opens = nodes.some((node) => node.kind === 'page' && label(node) === check.page && cited.some((own) => own.id === node.id));
+  const redirects = nodes.some((node) => node.kind === 'action' && node.attrs.redirects?.includes(check.page ?? '') && cited.some((own) => own.id === node.id));
+  if (check.page !== undefined && !opens && !redirects) return `the step does not open or redirect to ${check.page}`;
   if (check.element !== undefined) {
     const shown = reachable(cited, ctx);
     if (!nodes.some((node) => label(node) === check.element && shown.has(node.id))) return `${check.element} is not on what this step shows`;
   }
   return undefined;
+}
+
+// Why one of a step's errors is not what source says, or undefined when it is: an API error cites a response of the
+// route's guards, middleware or handler (by that name); a UI error, a message an action the step runs returns.
+function errorProblem(error: NonNullable<Step['errors']>[number], cited: GraphNode[], ctx: VerifyContext): string | undefined {
+  const { nodes, problem } = cite(error.evidence, ctx);
+  if (problem !== undefined) return problem;
+  if (error.kind === 'ui') {
+    const action = nodes.find((node) => node.kind === 'action' && cited.some((own) => own.id === node.id));
+    return action?.kind === 'action' && action.attrs.messages?.includes(error.message) ? undefined : `no action of this step returns "${error.message}"`;
+  }
+  const route = cited.find((node) => node.kind === 'route');
+  const owners = route === undefined ? [] : (['guarded-by', 'uses', 'handled-by'] as const).flatMap((kind) => ctx.nodes.out(route.id, kind));
+  const owner = owners.find((own) => label(own) === error.by);
+  const response = nodes.find((node) => node.kind === 'response' && owner !== undefined && ctx.nodes.out(owner.id, 'responds-with').some((own) => own.id === node.id));
+  if (owner === undefined) return `${error.by} is not a guard, middleware or handler of this route`;
+  if (response?.kind !== 'response') return `it cites no response of ${error.by}`;
+  if (response.attrs.status !== error.status) return `${response.id} sends ${response.attrs.status ?? 'an unknown status'}, not ${error.status}`;
+  return error.message === undefined || response.attrs.messages?.includes(error.message) ? undefined : `${response.id} doesn't send "${error.message}"`;
+}
+
+// Why a step's request body is not the schema its route validates, or undefined when it is.
+function bodyProblem(body: NonNullable<NonNullable<Step['request']>['body']>, cited: GraphNode[], ctx: VerifyContext): string | undefined {
+  const { nodes, problem } = cite(body.evidence, ctx);
+  if (problem !== undefined) return problem;
+  const route = cited.find((node) => node.kind === 'route');
+  const schema = nodes.find((node) => node.kind === 'request-schema' && route !== undefined && ctx.nodes.out(route.id, 'validated-by').some((own) => own.id === node.id));
+  if (schema?.kind !== 'request-schema') return "it cites no schema this route validates";
+  return schema.attrs.name === body.schema && JSON.stringify(schema.attrs.fields) === JSON.stringify(body.fields) ? undefined : `the fields are not those of ${schema.attrs.name}`;
 }
 
 // Why a step does not hold, or undefined when every part of it is backed by the graph.
@@ -127,7 +157,23 @@ async function verifyOne(input: unknown, ctx: VerifyContext): Promise<Verificati
     const checkIssue = checkProblem(step, nodes, flow, ctx);
     if (checkIssue !== undefined) reasons.push(keep ? `${step.id} check is not backed by source: ${checkIssue}` : `${step.id} check dropped: ${checkIssue}`);
     else if (step.check !== null) proven += 1;
-    steps.push({ ...step, check: checkIssue === undefined || keep ? step.check : null });
+    // Errors and the body are kept only when source backs them (a person's own steps keep them, with the reason).
+    const say = (what: string, issue: string) => reasons.push(keep ? `${step.id} ${what} is not backed by source: ${issue}` : `${step.id} ${what} dropped: ${issue}`);
+    const errors = (step.errors ?? []).filter((error) => {
+      const issue = errorProblem(error, nodes, ctx);
+      if (issue !== undefined) say('error', issue);
+      return issue === undefined || keep;
+    });
+    const body = step.request?.body;
+    const bodyIssue = body === undefined ? undefined : bodyProblem(body, nodes, ctx);
+    if (bodyIssue !== undefined) say('request body', bodyIssue);
+    const { errors: _, ...rest } = step;
+    steps.push({
+      ...rest,
+      ...(rest.request === undefined || bodyIssue === undefined || keep ? {} : { request: { method: rest.request.method, path: rest.request.path } }),
+      check: checkIssue === undefined || keep ? step.check : null,
+      ...(errors.length > 0 ? { errors } : {}),
+    });
   }
   // A person may build a flow from subflows alone; anything else needs a step of its own left.
   if (!keep && !steps.some((step) => step.kind !== 'subflow')) return { ok: false, id, name, reasons: [...reasons, 'no step survived'] };

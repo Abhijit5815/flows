@@ -52,7 +52,7 @@ run the same commands in its root and register its web and API folders.
 | `flows scan` | Parse the repos and build their flows (again after any code change; unchanged files are cached). |
 | `flows show flows` | Print the flows, with the evidence for every step. |
 | `flows ui` | The review page: approve, reject, edit, categorise and add flows. Your changes are saved in each repo's `.flows/` folder, so they go into version control with the code. |
-| `flows export --out flows.json` | Write the reviewed flows (every enabled flow) as JSON for a test tool. |
+| `flows export --out flows.json` | Write the reviewed flows (every enabled flow) as JSON for a test tool: each step's request (with the body's fields and rules), its expected result, and its errors (status, which guard or handler sends it, and the message), so negative cases can be written too. |
 | `flows explore <url>` | Visit the running app read-only (every write and WebSocket is blocked before it reaches the app) and cross-check what it shows with source. |
 | `flows login <url> --as <name>` | Log in once by hand; the session is kept locally for `explore --as <name>`. |
 | `flows inspect` | Use the app by hand in a browser window, for what the explorer can't reach. |

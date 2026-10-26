@@ -52,7 +52,9 @@ shows. The explorer only reads: every write and WebSocket is blocked before it r
    The user marks flows correct or wrong, edits them and adds missing ones. Everything they change is saved in each
    repo's `.flows/` folder, so it goes into version control with the code, and later scans never overwrite it.
 2. `flows export --out flows.json` writes the reviewed flows (every enabled flow, with the subflows it uses) for the
-   test tool. Flows itself writes and runs no tests.
+   test tool. Flows itself writes and runs no tests. When you write tests from it, each step's `errors` (and an API
+   step's `request.body` fields and rules) are the negative and edge cases source names; don't invent others as if
+   Flows found them.
 
 ## Rules
 

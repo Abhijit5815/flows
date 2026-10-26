@@ -169,13 +169,34 @@ function extract({ files, facts, resolver, graph }: ExtractContext): Unrecognise
     });
   };
 
+  // What an action ends in, from its own body: where it sends the browser (redirect('/account'), router.push('/x'))
+  // and the strings it returns for its form to show ('Wrong email or password.').
+  const outcomesOf = (fn: Node): { redirects?: string[]; messages?: string[] } => {
+    const redirects = fn.getDescendantsOfKind(SyntaxKind.CallExpression).flatMap((call) => {
+      const callee = call.getExpression();
+      const imported = Node.isIdentifier(callee) ? importOf(callee) : undefined;
+      const object = Node.isPropertyAccessExpression(callee) ? callee.getExpression() : undefined;
+      const navigates =
+        (imported?.module === 'next/navigation' && (imported.name === 'redirect' || imported.name === 'permanentRedirect')) ||
+        (Node.isPropertyAccessExpression(callee) && ['push', 'replace'].includes(callee.getName()) && Node.isIdentifier(object) && /\buseRouter\(/.test(object.getDefinitionNodes()[0]?.getText() ?? ''));
+      const path = navigates && call.getArguments()[0] !== undefined ? resolver.string(call.getArguments()[0]) : undefined;
+      return path?.startsWith('/') ? [path] : [];
+    });
+    const messages = fn.getDescendantsOfKind(SyntaxKind.ReturnStatement).flatMap((statement) => {
+      const value = statement.getExpression();
+      const own = statement.getFirstAncestor((ancestor) => isFunctionLike(ancestor)) === fn;
+      return own && (Node.isStringLiteral(value) || Node.isNoSubstitutionTemplateLiteral(value)) ? [value.getLiteralValue()] : [];
+    });
+    return { ...(redirects.length > 0 ? { redirects: [...new Set(redirects)] } : {}), ...(messages.length > 0 ? { messages: [...new Set(messages)] } : {}) };
+  };
+
   // An inline handler has no name of its own, so it is named after its component: "Header#action", "GamePage#onClick2".
   const addAction = (fn: Node, inlineName: () => string): string => {
     const holder = holderOf(fn);
     const key = keyOf(holder);
     if (graph.get(key) !== undefined) return key;
     const name = qualifiedName(holder) ?? inlineName();
-    graph.add(key, { kind: 'action', name, ...resolver.where(holder), attrs: { name, server: isServerAction(fn) } });
+    graph.add(key, { kind: 'action', name, ...resolver.where(holder), attrs: { name, server: isServerAction(fn), ...outcomesOf(fn) } });
     for (const call of new Set(apiCallsIn(fn, NO_ENV, 0, new Set()))) graph.edge(key, call, 'calls');
     return key;
   };

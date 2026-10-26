@@ -117,7 +117,7 @@ test('API: answered calls confirm their most specific route; writes and unexplor
   assert.deepEqual(names(api, (flow) => flow.status === 'observed-only'), ['GET /api/cart', 'GET /api/orders', 'GET /api/products', 'GET /api/products/:id', 'GET /api/v1/reviews', 'POST /api/auth/login']);
   assert.deepEqual(api.roles, [
     { guard: 'requireAuth', node: 'api:guard:requireAuth', covered: true },
-    { guard: 'requireRole', node: 'api:guard:requireRole', covered: false },
+    { guard: "requireRole('admin')", node: "api:guard:requireRole('admin')", covered: false },
   ]);
 });
 

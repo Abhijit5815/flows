@@ -19,7 +19,7 @@ import { exportFlows } from '../engine/export.ts';
 import { learnedExamples, withLearned } from '../engine/learning.ts';
 import { OptionalLlm } from '../engine/llm.ts';
 import { loadFlows, type FlowSet } from '../engine/store.ts';
-import { stepLine } from '../engine/views.ts';
+import { stepDetails, stepLine } from '../engine/views.ts';
 import { STALE } from '../model/tags.ts';
 import type { Graph } from '../graph/schema.ts';
 import { loadGraph, repoFile } from '../graph/store.ts';
@@ -303,7 +303,10 @@ function showFlows(project: Project, what: 'flows' | 'rejected' | 'unreachable')
       const review = flow.destructive !== 'no' && !flow.enabled && flow.status !== 'rejected' ? `  REVIEW: destructive ${flow.destructive}` : '';
       console.log(`  ${flow.status.padEnd(11)} ${flow.confidence.toFixed(2)}  ${flow.id}  ${flow.name}  [${flow.category}]${flow.enabled ? '' : '  (disabled)'}${review}`);
       if (flow.description !== undefined) console.log(`      ${flow.description}`);
-      for (const step of flow.steps) console.log(`      ${step.id} ${stepLine(step)}   ${step.evidence.map((item) => item.ref).join(', ')}`);
+      for (const step of flow.steps) {
+        console.log(`      ${step.id} ${stepLine(step)}   ${step.evidence.map((item) => item.ref).join(', ')}`);
+        for (const line of stepDetails(step)) console.log(`         ${line}`);
+      }
       for (const reason of set.reasons[flow.id] ?? []) console.log(`      - ${reason}`);
     }
     const verdicts = verdictsOf(loadRules(resolve(project.root, repo.path)));

@@ -82,6 +82,35 @@ for (const [app, role] of [['express-basic', 'api'], ['next-basic', 'web']] as c
   });
 }
 
+// The negative cases are claims too: an error, a body field or a redirect source doesn't back is dropped, with why.
+test('errors, a request body and a redirect check stay only when source backs them', async () => {
+  const verify = async (flow: Flow, { graph }: Fixture) => {
+    const [result] = await verifyFlows([flow], { graph, nodes: lookup(graph), grounding: refusing(), maxDepth: 3 });
+    assert.ok(result.ok);
+    return result;
+  };
+  const api = await fixture('express-basic', 'api');
+  const register = structuredClone(api.genuine.find((flow) => flow.name === 'POST /api/v1/users/register') as Flow);
+  const call = register.steps[0];
+  assert.ok(call.errors !== undefined && call.request?.body !== undefined);
+  const cited = call.errors[1].evidence;
+  call.errors.push({ kind: 'api', status: 500, by: 'register', evidence: cited }, { kind: 'api', status: 409, by: 'register', message: 'try again later', evidence: cited });
+  call.request.body.fields[1].rules = ['min(1)'];
+  const kept = (await verify(register, api)).flow.steps[0];
+  assert.deepEqual(kept.errors?.map((error) => (error.kind === 'api' ? `${error.status} ${error.message ?? ''}` : '')), ['400 ', '409 email already registered']);
+  assert.deepEqual(kept.request, { method: 'POST', path: '/api/v1/users/register' });
+
+  const web = await fixture('next-basic', 'web');
+  const login = structuredClone(web.genuine.find((flow) => flow.id === 'ui-082b51bb') as Flow);
+  const submit = login.steps[1];
+  assert.ok(submit.check?.kind === 'ui' && submit.errors?.[0].kind === 'ui');
+  submit.check.page = '/admin';
+  submit.errors.push({ kind: 'ui', message: 'Welcome back!', evidence: submit.errors[0].evidence });
+  const result = await verify(login, web);
+  assert.deepEqual([result.flow.steps[1].check, result.flow.steps[1].errors?.length], [null, 2]);
+  assert.ok(result.reasons.some((reason) => reason.includes('redirect to /admin')) && result.reasons.some((reason) => reason.includes('"Welcome back!"')));
+});
+
 // PLAN.md Phase 4 exit: zero fabricated routes or steps pass the verifier.
 async function plant(fakes: readonly Fake[], found: Fixture, grounding: Decider, report: (line: string) => void): Promise<number> {
   let passed = 0;

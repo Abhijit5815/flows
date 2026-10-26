@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import type { DecisionView } from '../../engine/classify.ts';
+import { stepDetails } from '../../engine/views.ts';
 import type { Flow } from '../../model/flow.ts';
 import type { Evidence } from '../../model/evidence.ts';
 import type { Snippet } from '../api.ts';
@@ -157,6 +158,13 @@ export function Panel({ item, onClose, children }: { item: Item; onClose: () => 
                 </p>
               )}
               {expectation(step.check) === undefined ? (step.kind === 'subflow' ? null : <p className="muted">No check: source doesn't say what to expect.</p>) : <p>Expect: {expectation(step.check)}</p>}
+              {stepDetails(step).length === 0 ? null : (
+                <ul className="reasons">
+                  {stepDetails(step).map((line) => (
+                    <li key={line}>{line}</li>
+                  ))}
+                </ul>
+              )}
               {step.evidence.map((evidence) => (evidence.type === 'code' ? <Code key={`${step.id}:${evidence.ref}`} repo={item.repo.path} at={evidence.ref} /> : <Captured key={`${step.id}:${evidence.ref}`} evidence={evidence} />))}
             </li>
           ))}

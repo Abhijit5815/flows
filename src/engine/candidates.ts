@@ -49,7 +49,41 @@ export function draft(kind: Flow['kind'], key: string, steps: DraftStep[], graph
 // The steps the engine writes, shared by generated flows and by the flows a person draws or describes.
 export const openStep = (page: GraphNode): DraftStep => ({ kind: 'ui', claim: template('ui', [page]), evidence: [evidenceOf(page)], check: { kind: 'ui', page: label(page), evidence: [evidenceOf(page)] }, enabled: true });
 
-export const uiStep = (cited: GraphNode[]): DraftStep => ({ kind: 'ui', claim: template('ui', cited), evidence: cited.map(evidenceOf), check: null, enabled: true });
+// A form or click that runs an action: where the action redirects is the check (when it names one place), and the
+// messages it returns are the errors.
+export const uiStep = (cited: GraphNode[]): DraftStep => {
+  const action = cited.find((node) => node.kind === 'action');
+  const outcomes = action?.kind === 'action' ? action.attrs : undefined;
+  const redirects = outcomes?.redirects ?? [];
+  return {
+    kind: 'ui',
+    claim: template('ui', cited),
+    evidence: cited.map(evidenceOf),
+    check: action !== undefined && redirects.length === 1 ? { kind: 'ui', page: redirects[0], evidence: [evidenceOf(action)] } : null,
+    ...(action !== undefined && outcomes?.messages !== undefined ? { errors: outcomes.messages.map((message) => ({ kind: 'ui' as const, message, evidence: [evidenceOf(action)] })) } : {}),
+    enabled: true,
+  };
+};
+
+// What a route answers besides success: its guards' and middleware's error responses, then its handler's; one error
+// per message, so "missing token" and "invalid token" are two cases.
+export function routeErrors(route: GraphNode, nodes: Lookup): NonNullable<Step['errors']> {
+  const owners = [...nodes.out(route.id, 'guarded-by'), ...nodes.out(route.id, 'uses'), ...nodes.out(route.id, 'handled-by')];
+  return owners.flatMap((owner) =>
+    nodes.out(owner.id, 'responds-with').flatMap((response) => {
+      if (response.kind !== 'response' || response.attrs.status === undefined || response.attrs.status < 400) return [];
+      const error = { kind: 'api' as const, status: response.attrs.status, by: label(owner), evidence: [evidenceOf(response)] };
+      return response.attrs.messages === undefined ? [error] : response.attrs.messages.map((message) => ({ ...error, message }));
+    }),
+  );
+}
+
+// The body a route validates, with its fields; only for methods that send one.
+export function routeBody(route: GraphNode, nodes: Lookup): NonNullable<Step['request']>['body'] {
+  if (route.kind !== 'route' || ['GET', 'HEAD', 'OPTIONS'].includes(route.attrs.method)) return undefined;
+  const schema = nodes.out(route.id, 'validated-by').find((node) => node.kind === 'request-schema' && node.attrs.fields !== undefined);
+  return schema?.kind === 'request-schema' && schema.attrs.fields !== undefined ? { schema: schema.attrs.name, fields: schema.attrs.fields, evidence: [evidenceOf(schema)] } : undefined;
+}
 
 // shortcut: a full URL means another service and "?" an unreadable path; neither can be a request, so the step is
 // left out (the caller notes why), never guessed.
@@ -75,7 +109,17 @@ export function routeStep(route: GraphNode, nodes: Lookup): DraftStep | string {
       ? null
       : { kind: 'api', status: response.attrs.status, ...(response.attrs.fields.length > 0 ? { fields: response.attrs.fields } : {}), evidence: [evidenceOf(response)] };
   const cited = handler === undefined ? [route] : [route, handler];
-  return { kind: 'api', claim: template('api', cited), request: { method, path }, evidence: cited.map(evidenceOf), check, enabled: true };
+  const body = routeBody(route, nodes);
+  const errors = routeErrors(route, nodes);
+  return {
+    kind: 'api',
+    claim: template('api', cited),
+    request: { method, path, ...(body === undefined ? {} : { body }) },
+    evidence: cited.map(evidenceOf),
+    check,
+    ...(errors.length > 0 ? { errors } : {}),
+    enabled: true,
+  };
 }
 
 // One flow per route: call it, and expect its only success response.

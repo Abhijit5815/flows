@@ -1,6 +1,6 @@
 import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -60,4 +60,39 @@ test('a repo path through a symlink gives the same graph', async () => {
   const { graph } = await scanRepo(project, addRepo(project, linked, 'api').config.repos[0]);
   assert.ok(graph);
   assert.deepEqual(byRoute(routeViews(graph)), byRoute(expected.routes));
+});
+
+// Request bodies: the fields of a Zod object, through the schemas it is derived from.
+test('a body schema gives its fields, through extend, omit, partial, enum and default', async () => {
+  const dir = join(tmp, 'zod-app');
+  mkdirSync(join(dir, 'src'), { recursive: true });
+  writeFileSync(join(dir, 'package.json'), JSON.stringify({ dependencies: { express: '^4.19.2', zod: '^3.23.0' } }));
+  writeFileSync(
+    join(dir, 'src', 'server.ts'),
+    `import express from 'express';
+import { z } from 'zod';
+const app = express();
+const Base = z.object({ name: z.string().min(1), role: z.enum(['admin', 'user']).default('user'), age: z.number().int().optional() });
+const Create = Base.extend({ email: z.string().email() }).omit({ age: true });
+const Update = Create.partial();
+app.post('/people', (req, res) => { Create.parse(req.body); res.status(201).json({ ok: true }); });
+app.patch('/people/:id', (req, res) => { Update.parse(req.body); res.json({ ok: true }); });
+app.listen(3000);
+`,
+  );
+  const project = tempProject(join(tmp, 'zod'));
+  const { graph } = await scanRepo(project, addRepo(project, dir, 'api').config.repos[0]);
+  const fields = (name: string) => graph?.nodes.find((node) => node.kind === 'request-schema' && node.attrs.name === name)?.attrs;
+  assert.deepEqual(fields('Create'), {
+    name: 'Create',
+    fields: [
+      { name: 'name', type: 'string', required: true, rules: ['min(1)'] },
+      { name: 'role', type: 'enum', required: false, rules: ["enum(['admin', 'user'])", "default('user')"] },
+      { name: 'email', type: 'string', required: true, rules: ['email'] },
+    ],
+  });
+  assert.deepEqual(
+    (fields('Update') as { fields: { required: boolean }[] }).fields.map((field) => field.required),
+    [false, false, false],
+  );
 });

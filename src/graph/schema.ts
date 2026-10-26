@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { Role } from '../config/project.ts';
-import { HTTP_METHODS } from '../model/flow.ts';
+import { FieldSchema, HTTP_METHODS } from '../model/flow.ts';
 
 // PLAN.md §4: one graph per registered repo. An api repo gives the API graph and a web repo the UI graph.
 // Edges only join nodes of their own graph, so the two graphs are never linked.
@@ -17,8 +17,9 @@ const ApiNodeSchema = z.discriminatedUnion('kind', [
   node('handler', Named),
   node('guard', Named),
   node('middleware', Named),
-  node('request-schema', Named),
-  node('response', z.object({ status: z.int().min(100).max(599).optional(), fields: z.array(z.string().min(1)) })),
+  node('request-schema', Named.extend({ fields: z.array(FieldSchema).optional() })), // fields: a Zod object Flows could read
+  // messages: the string literals sent with it ("order not found"); guards and middleware respond too.
+  node('response', z.object({ status: z.int().min(100).max(599).optional(), fields: z.array(z.string().min(1)), messages: z.array(z.string().min(1)).optional() })),
   node('model', Named),
 ]);
 
@@ -27,7 +28,8 @@ const WebNodeSchema = z.discriminatedUnion('kind', [
   node('layout', z.object({ path: z.string().startsWith('/') })),
   node('component', Named),
   node('form', z.object({ fields: z.array(z.string().min(1)) })),
-  node('action', z.object({ name: z.string().min(1), server: z.boolean() })),
+  // redirects: where it sends the browser (redirect('/account')); messages: the strings it returns for the form to show.
+  node('action', z.object({ name: z.string().min(1), server: z.boolean(), redirects: z.array(z.string().startsWith('/')).optional(), messages: z.array(z.string().min(1)).optional() })),
   node('guard', Named),
   // Not linked to a backend route (PLAN.md §1); the path may be a full URL for calls to other services.
   node('api-call', z.object({ method: MethodSchema, path: z.string().min(1) })),

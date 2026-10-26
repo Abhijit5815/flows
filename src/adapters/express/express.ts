@@ -3,6 +3,7 @@ import { Node, SyntaxKind } from 'ts-morph';
 import { z } from 'zod';
 import { PatternRuleSchema } from '../../ingest/match.ts';
 import { holderOf, importOf, inProject, isFunctionLike, keyOf, NO_ENV, qualifiedName, type Env } from '../../ingest/resolve.ts';
+import type { Field } from '../../model/flow.ts';
 import type { ExtractContext, FrameworkAdapter, Unrecognised } from '../adapter.ts';
 
 // The rules are data (rules.json); this file follows what they match: routers, mounts, routes, handlers,
@@ -54,6 +55,59 @@ function isSchema(declaration: Node, depth = 0): boolean {
   if (importOf(root)?.module === 'zod') return true;
   const source = root.getDefinitionNodes()[0];
   return source !== undefined && isSchema(source, depth + 1);
+}
+
+// A field's Zod chain, z.string().email().min(8).optional(): the base type, then every other link as a rule.
+function fieldOf(name: string, value: Node): Field {
+  const chain: string[] = [];
+  let base = value;
+  while (Node.isCallExpression(base)) {
+    const callee = base.getExpression();
+    if (!Node.isPropertyAccessExpression(callee)) break;
+    const args = base.getArguments().map((arg) => arg.getText()).join(', ');
+    chain.unshift(args === '' ? callee.getName() : args.length <= 60 ? `${callee.getName()}(${args})` : `${callee.getName()}(…)`);
+    base = callee.getExpression();
+  }
+  // From z the first link is the type (string, enum([...])); otherwise the base is another schema, used as the type.
+  const [type, ...rules] = Node.isIdentifier(base) && importOf(base)?.module === 'zod' && chain.length > 0 ? chain : [base.getText(), ...chain];
+  const bare = type.replace(/\(.*$/s, '');
+  return {
+    name,
+    type: bare,
+    required: !rules.some((rule) => rule === 'optional' || rule === 'nullish' || rule.startsWith('default(')),
+    rules: [...(bare === type ? [] : [type]), ...rules.filter((rule) => rule !== 'optional')],
+  };
+}
+
+// The fields of a Zod object schema, followed through the schemas it is derived from (pick, omit, extend, partial).
+// shortcut: class-validator DTOs and shapes built in code give no fields; read them when a team needs them.
+function zodFields(expression: Node | undefined, depth = 0): Field[] | undefined {
+  if (expression === undefined || depth > 4) return undefined; // depth: hops from one schema to another
+  if (Node.isVariableDeclaration(expression)) return zodFields(expression.getInitializer(), depth);
+  if (Node.isIdentifier(expression)) return zodFields(expression.getDefinitionNodes()[0], depth + 1);
+  if (!Node.isCallExpression(expression)) return undefined;
+  const callee = expression.getExpression();
+  if (!Node.isPropertyAccessExpression(callee)) return undefined;
+  const [arg] = expression.getArguments();
+  const literal = Node.isObjectLiteralExpression(arg) ? arg : undefined;
+  const own = () => literal?.getProperties().flatMap((property) => (Node.isPropertyAssignment(property) ? [fieldOf(property.getName(), property.getInitializerOrThrow())] : [])) ?? [];
+  const base = callee.getExpression();
+  if (callee.getName() === 'object' && Node.isIdentifier(base) && importOf(base)?.module === 'zod') return literal === undefined ? undefined : own();
+  const inner = zodFields(base, depth);
+  if (inner === undefined) return undefined;
+  const keys = literal?.getProperties().flatMap((property) => (Node.hasName(property) ? [property.getName()] : [])) ?? [];
+  switch (callee.getName()) {
+    case 'pick':
+      return inner.filter((field) => keys.includes(field.name));
+    case 'omit':
+      return inner.filter((field) => !keys.includes(field.name));
+    case 'extend':
+      return [...inner.filter((field) => !keys.includes(field.name)), ...own()];
+    case 'partial':
+      return inner.map((field) => ({ ...field, required: false }));
+    default:
+      return inner; // strict, refine, transform, describe: the same fields
+  }
 }
 
 // The identifier at the base of a call chain (res in res.status(201).json(...)) is one of the response parameters.
@@ -183,7 +237,8 @@ function extract({ facts, files, read, resolver, graph, guards }: ExtractContext
     const declaration = resolver.declaration(expression, env);
     if (declaration === undefined || !isSchema(declaration)) return;
     const name = qualifiedName(declaration) ?? declaration.getText();
-    graph.edge(route, graph.add(keyOf(declaration), { kind: 'request-schema', name, ...resolver.where(declaration), attrs: { name } }), 'validated-by');
+    const fields = zodFields(declaration);
+    graph.edge(route, graph.add(keyOf(declaration), { kind: 'request-schema', name, ...resolver.where(declaration), attrs: { name, ...(fields === undefined || fields.length === 0 ? {} : { fields }) } }), 'validated-by');
   };
 
   const addMiddleware = (route: string, { node, env }: Uses): void => {
@@ -195,14 +250,27 @@ function extract({ facts, files, read, resolver, graph, guards }: ExtractContext
     const declaration = resolver.declaration(node, env);
     if (declaration === undefined) return; // library middleware: express.json(), cors(), helmet()
     const where = resolver.where(declaration);
-    const name = qualifiedName(declaration) ?? `inline ${where.file}:${where.line}`;
-    const guard = guards.includes(name) || GUARD_NAME.test(name) || GUARD_BODY.test(declaration.getText());
-    graph.edge(route, graph.add(keyOf(declaration), { kind: guard ? 'guard' : 'middleware', name, ...where, attrs: { name } }), guard ? 'guarded-by' : 'uses');
+    const base = qualifiedName(declaration) ?? `inline ${where.file}:${where.line}`;
+    const guard = guards.includes(base) || GUARD_NAME.test(base) || GUARD_BODY.test(declaration.getText());
+    // A guard made by a call is one guard per argument, requireRole('admin'): the role is what a test needs.
+    const args = guard && Node.isCallExpression(node) ? node.getArguments().map((arg) => resolver.string(arg, env)) : [];
+    const fixed = args.length > 0 && args.every((arg) => arg !== undefined) ? (args as string[]) : [];
+    const name = fixed.length === 0 ? base : `${base}(${fixed.map((arg) => `'${arg}'`).join(', ')})`;
+    const owner = graph.add(fixed.length === 0 ? keyOf(declaration) : `${keyOf(declaration)}(${fixed.join(',')})`, { kind: guard ? 'guard' : 'middleware', name, ...where, attrs: { name } });
+    graph.edge(route, owner, guard ? 'guarded-by' : 'uses');
+    if (!responded.has(owner)) {
+      responded.add(owner);
+      // What it answers when it stops the request (401, 403, 400): the middleware itself, or the one a factory returns.
+      const fn = Node.isVariableDeclaration(declaration) ? declaration.getInitializer() : declaration;
+      for (const inner of fn === undefined ? [] : [fn, ...fn.getDescendants()].filter((each) => isFunctionLike(each))) addResponses(owner, name, inner);
+    }
     if (Node.isCallExpression(node)) for (const arg of node.getArguments()) addSchema(route, arg, env); // validate(schema)
   };
 
   // Responses a function sends: res.<send>(...) on a response parameter, or through a helper it hands res to.
-  type Sent = Map<number | undefined, { fields: string[]; site: Node }>;
+  // messages: the string literals at the site (fail(res, 404, 'order not found')) or in the body sent.
+  type Sent = Map<number | undefined, { fields: string[]; messages: string[]; site: Node }>;
+  const literals = (nodes: readonly Node[]): string[] => nodes.flatMap((node) => (Node.isStringLiteral(node) || Node.isNoSubstitutionTemplateLiteral(node) ? [node.getLiteralValue()] : []));
   const collectResponses = (fn: Node, responses: ReadonlySet<string>, env: Env, depth: number, site: Node | undefined, sent: Sent): void => {
     for (const call of fn.getDescendantsOfKind(SyntaxKind.CallExpression)) {
       const callee = call.getExpression();
@@ -221,10 +289,15 @@ function extract({ facts, files, read, resolver, graph, guards }: ExtractContext
         }
         const body = ['json', 'send', 'jsonp'].includes(method) ? call.getArguments()[0] : undefined;
         const object = body === undefined ? undefined : resolver.values(body, env).find((value) => Node.isObjectLiteralExpression(value));
-        const fields = Node.isObjectLiteralExpression(object) ? object.getProperties().flatMap((property) => (Node.hasName(property) ? [property.getName()] : [])) : [];
+        const properties = Node.isObjectLiteralExpression(object) ? object.getProperties() : [];
+        const fields = properties.flatMap((property) => (Node.hasName(property) ? [property.getName()] : []));
+        const messages = literals([...(Node.isCallExpression(here) && here !== call ? here.getArguments() : []), ...properties.flatMap((property) => (Node.isPropertyAssignment(property) ? [property.getInitializerOrThrow()] : []))]);
         const seen = sent.get(status);
-        if (seen === undefined) sent.set(status, { fields, site: here });
-        else seen.fields.push(...fields.filter((field) => !seen.fields.includes(field)));
+        if (seen === undefined) sent.set(status, { fields, messages, site: here });
+        else {
+          seen.fields.push(...fields.filter((field) => !seen.fields.includes(field)));
+          seen.messages.push(...messages.filter((message) => !seen.messages.includes(message)));
+        }
         continue;
       }
       if (depth >= 2) continue;
@@ -263,6 +336,18 @@ function extract({ facts, files, read, resolver, graph, guards }: ExtractContext
       return Node.isPropertyAccessExpression(callee) && /^(safe)?[pP]arse(Async)?$/.test(callee.getName()) ? [callee.getExpression()] : [];
     });
 
+  // A response node per status a function sends, linked from the handler, guard or middleware it belongs to.
+  const responded = new Set<string>();
+  const addResponses = (owner: string, name: string, fn: Node): void => {
+    const sent: Sent = new Map();
+    const response = Node.isArrowFunction(fn) || Node.isFunctionExpression(fn) || Node.isFunctionDeclaration(fn) || Node.isMethodDeclaration(fn) ? fn.getParameters()[1] : undefined;
+    if (response !== undefined) collectResponses(fn, new Set([keyOf(response)]), NO_ENV, 0, undefined, sent);
+    for (const [status, { fields, messages, site }] of sent) {
+      const node = graph.add(`${owner}#${status}`, { kind: 'response', name: `${name}#${status ?? 'unknown'}`, ...resolver.where(site), attrs: { status, fields, ...(messages.length > 0 ? { messages } : {}) } });
+      graph.edge(owner, node, 'responds-with');
+    }
+  };
+
   const handled = new Map<string, Node[]>();
   const addHandler = (route: string, expression: Node, env: Env, inline: string): void => {
     const fn = resolver.values(expression, env).find((value) => isFunctionLike(value) && inProject(value));
@@ -275,13 +360,7 @@ function extract({ facts, files, read, resolver, graph, guards }: ExtractContext
     const handler = graph.add(keyOf(holder), { kind: 'handler', name, ...resolver.where(holder), attrs: { name } });
     graph.edge(route, handler, 'handled-by');
     if (!handled.has(handler)) {
-      const sent: Sent = new Map();
-      const response = Node.isArrowFunction(fn) || Node.isFunctionExpression(fn) || Node.isFunctionDeclaration(fn) || Node.isMethodDeclaration(fn) ? fn.getParameters()[1] : undefined;
-      if (response !== undefined) collectResponses(fn, new Set([keyOf(response)]), NO_ENV, 0, undefined, sent);
-      for (const [status, { fields, site }] of sent) {
-        const node = graph.add(`${handler}#${status}`, { kind: 'response', name: `${name}#${status ?? 'unknown'}`, ...resolver.where(site), attrs: { status, fields } });
-        graph.edge(handler, node, 'responds-with');
-      }
+      addResponses(handler, name, fn);
       for (const model of new Set(modelsIn(fn, 0))) graph.edge(handler, model, 'touches');
       handled.set(handler, parsedSchemas(fn));
     }

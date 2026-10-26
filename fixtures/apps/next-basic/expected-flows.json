@@ -77,7 +77,9 @@
       "name": "Submit LoginForm#form on /login (POST /api/auth/login)",
       "steps": [
         "ui: Open /login | check /login",
-        "ui: Fill in and submit LoginForm#form (email, password), which runs login",
+        "ui: Fill in and submit LoginForm#form (email, password), which runs login | check /account",
+        "  error: Enter a valid email and password.",
+        "  error: Wrong email or password.",
         "api: Calls POST /api/auth/login"
       ]
     },

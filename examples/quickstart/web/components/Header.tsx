@@ -8,7 +8,7 @@ export default function Header() {
       <form
         action={async () => {
           'use server';
-          await fetch(`${API_URL}/auth/logout`, { method: 'POST' });
+          await fetch(`${API_URL}/users/logout`, { method: 'POST' });
         }}
       >
         <button>Sign out</button>

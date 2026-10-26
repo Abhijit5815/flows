@@ -5,6 +5,8 @@ import type { Lookup } from '../graph/lookup.ts';
 import type { Graph, GraphNode } from '../graph/schema.ts';
 import { FlowSchema, type Flow } from '../model/flow.ts';
 import { claimOf, flowName, isRunClaim, label, LOGIN_CLAIM, premiseOf } from './describe.ts';
+import { routeFor, type Backend } from './backend.ts';
+import { flowId } from './candidates.ts';
 import { isLogin } from './subflows.ts';
 
 type Step = Flow['steps'][number];
@@ -20,7 +22,8 @@ export type Verification = Verified | { ok: false; id: string; name: string; rea
 // not claims the graph has to back).
 export type Human = { steps: boolean; text: boolean };
 
-export type VerifyContext = { graph: Graph; nodes: Lookup; grounding: Decider; maxDepth: number; human?: ReadonlyMap<string, Human> };
+// backend: the project's API graphs, for the routes that answer a UI flow's calls.
+export type VerifyContext = { graph: Graph; nodes: Lookup; grounding: Decider; maxDepth: number; human?: ReadonlyMap<string, Human>; backend?: Backend };
 
 const UI_KINDS = new Set(['page', 'layout', 'component', 'form', 'action']);
 
@@ -61,8 +64,8 @@ function checkProblem(step: Step, cited: GraphNode[], flow: Flow, ctx: VerifyCon
   const { nodes, problem } = cite(check.evidence, ctx);
   if (problem !== undefined) return problem;
   if (check.kind === 'api') {
-    if (flow.kind === 'ui') return 'the UI graph has no responses to check against';
     const route = cited.find((node) => node.kind === 'route');
+    if (route === undefined && flow.kind === 'ui') return 'no backend route answers this call';
     const responses = route === undefined ? [] : ctx.nodes.out(route.id, 'handled-by').flatMap((handler) => ctx.nodes.out(handler.id, 'responds-with'));
     const response = nodes.find((node) => node.kind === 'response' && responses.some((own) => own.id === node.id));
     if (response?.kind !== 'response') return "it cites no response of this route's handler";
@@ -110,6 +113,17 @@ function bodyProblem(body: NonNullable<NonNullable<Step['request']>['body']>, ci
   return schema.attrs.name === body.schema && JSON.stringify(schema.attrs.fields) === JSON.stringify(body.fields) ? undefined : `the fields are not those of ${schema.attrs.name}`;
 }
 
+// The route a UI flow's API step names as its answer, when it is the one that answers the call in the API graphs.
+function answeredBy(step: Step, ctx: VerifyContext): { route?: GraphNode; problem?: string } {
+  if (step.answered_by === undefined) return {};
+  if (ctx.backend === undefined || step.request === undefined) return { problem: 'there is no API graph to check it against' };
+  const { nodes, problem } = cite(step.answered_by.evidence, { ...ctx, nodes: ctx.backend.nodes });
+  const route = nodes.find((node) => node.kind === 'route');
+  if (problem !== undefined || route === undefined) return { problem: problem ?? 'it cites no route' };
+  if (routeFor(step.request, ctx.backend)?.id !== route.id) return { problem: `${route.id} is not the route that answers ${step.request.method} ${step.request.path}` };
+  return step.answered_by.flow === flowId('api', route.id) ? { route } : { problem: `${route.id} is API flow ${flowId('api', route.id)}, not ${step.answered_by.flow}` };
+}
+
 // Why a step does not hold, or undefined when every part of it is backed by the graph.
 async function stepProblem(step: Step, flow: Flow, ctx: VerifyContext): Promise<{ problem?: string; nodes: GraphNode[] }> {
   const { nodes, problem } = cite(step.evidence, ctx);
@@ -154,25 +168,30 @@ async function verifyOne(input: unknown, ctx: VerifyContext): Promise<Verificati
       continue;
     }
     proven += 1;
-    const checkIssue = checkProblem(step, nodes, flow, ctx);
-    if (checkIssue !== undefined) reasons.push(keep ? `${step.id} check is not backed by source: ${checkIssue}` : `${step.id} check dropped: ${checkIssue}`);
+    const say = (what: string, issue: string) => reasons.push(keep ? `${step.id} ${what} is not backed by source: ${issue}` : `${step.id} ${what} dropped: ${issue}`);
+    // A call a backend route answers is checked against that route in the API graphs; everything else in its own graph.
+    const answered = answeredBy(step, ctx);
+    if (answered.problem !== undefined) say('backend route', answered.problem);
+    const [where, here] = answered.route !== undefined && ctx.backend !== undefined ? [[answered.route], { ...ctx, nodes: ctx.backend.nodes }] : [nodes, ctx];
+    const checkIssue = checkProblem(step, where, flow, here);
+    if (checkIssue !== undefined) say('check', checkIssue);
     else if (step.check !== null) proven += 1;
     // Errors and the body are kept only when source backs them (a person's own steps keep them, with the reason).
-    const say = (what: string, issue: string) => reasons.push(keep ? `${step.id} ${what} is not backed by source: ${issue}` : `${step.id} ${what} dropped: ${issue}`);
     const errors = (step.errors ?? []).filter((error) => {
-      const issue = errorProblem(error, nodes, ctx);
+      const issue = errorProblem(error, where, here);
       if (issue !== undefined) say('error', issue);
       return issue === undefined || keep;
     });
     const body = step.request?.body;
-    const bodyIssue = body === undefined ? undefined : bodyProblem(body, nodes, ctx);
+    const bodyIssue = body === undefined ? undefined : bodyProblem(body, where, here);
     if (bodyIssue !== undefined) say('request body', bodyIssue);
-    const { errors: _, ...rest } = step;
+    const { errors: _, answered_by: link, ...rest } = step;
     steps.push({
       ...rest,
       ...(rest.request === undefined || bodyIssue === undefined || keep ? {} : { request: { method: rest.request.method, path: rest.request.path } }),
       check: checkIssue === undefined || keep ? step.check : null,
       ...(errors.length > 0 ? { errors } : {}),
+      ...(link !== undefined && (answered.problem === undefined || keep) ? { answered_by: link } : {}),
     });
   }
   // A person may build a flow from subflows alone; anything else needs a step of its own left.

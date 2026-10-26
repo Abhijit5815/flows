@@ -10,6 +10,7 @@ datasource db {
 model User {
   id       Int     @id @default(autoincrement())
   email    String  @unique
+  name     String?
   password String
   role     String  @default("customer")
   orders   Order[]
@@ -19,6 +20,13 @@ model Product {
   id    Int    @id @default(autoincrement())
   name  String
   price Int
+}
+
+model CartItem {
+  id        Int @id @default(autoincrement())
+  userId    Int
+  productId Int
+  quantity  Int
 }
 
 model Order {

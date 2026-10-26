@@ -19,6 +19,14 @@ export async function login(req: Request, res: Response) {
 
 export const me = (req: Request, res: Response) => ok(res, res.locals.user);
 
+export async function updateMe(req: Request, res: Response) {
+  const user = await prisma.user.update({ where: { id: res.locals.user.id }, data: req.body });
+  return ok(res, { id: user.id, email: user.email, name: user.name });
+}
+
+// Tokens are stateless, so signing out is the client dropping its token; the route confirms it.
+export const logout = (req: Request, res: Response) => res.sendStatus(204);
+
 export async function getById(req: Request, res: Response) {
   const user = await prisma.user.findUnique({ where: { id: Number(req.params.id) } });
   return user ? ok(res, user) : fail(res, 404, 'user not found');

@@ -10,6 +10,9 @@ import { eventBase, type TraceEvent } from '../trace/event.ts';
 import type { TraceSink } from '../trace/sink.ts';
 import { liveFor, matchFlow, NOT_OBSERVED, ROLE_NOT_EXPLORED, rolesOf, unexploredGuard, type Live } from '../live/crosscheck.ts';
 import { indexOf } from '../live/match.ts';
+import { NO_ROUTE } from '../model/tags.ts';
+import { loadGraph } from '../graph/store.ts';
+import { backendOf, linkCalls } from './backend.ts';
 import { candidates } from './candidates.ts';
 import { classify } from './classify.ts';
 import { deciderText } from './describe.ts';
@@ -44,7 +47,9 @@ export const verdictsOf = (rules: readonly LearnedRule[]): Map<string, Verdict> 
 // overwritten. Phase 3: with live runs, the cross-check confirms the flows the live app showed, tags the gaps, and
 // adds the observed flows source doesn't have. Every skipped candidate, verification and judgement goes to the trace
 // as a verdict event.
-export async function buildFlows(graph: Graph, human: HumanInput, deps: EngineDeps, live?: Live): Promise<FlowSet> {
+// backends: the project's API graphs; a web repo's calls are linked to the routes that answer them.
+export async function buildFlows(graph: Graph, human: HumanInput, deps: EngineDeps, live?: Live, backends: readonly Graph[] = []): Promise<FlowSet> {
+  const backend = graph.role === 'web' ? backendOf(backends) : undefined;
   const nodes = lookup(graph);
   const record = (started: number, stage: Extract<TraceEvent, { kind: 'verdict' }>['stage'], subject: string, outcome: string, reasons: string[]) =>
     deps.trace.record({ ...eventBase(started), kind: 'verdict', stage, subject, outcome, reasons });
@@ -62,14 +67,14 @@ export async function buildFlows(graph: Graph, human: HumanInput, deps: EngineDe
     return { ...flow, steps };
   };
   const addedIds = new Set(added.map((flow) => flow.id));
-  const flows = [...generated.flows.filter((flow) => !addedIds.has(flow.id)), ...added].map(withSteps);
+  const flows = [...generated.flows.filter((flow) => !addedIds.has(flow.id)), ...added].map(withSteps).map((flow) => (backend === undefined ? flow : linkCalls(flow, backend)));
   const people = new Map<string, Human>(flows.flatMap((flow) => (addedIds.has(flow.id) || overrides[flow.id]?.steps !== undefined ? [[flow.id, { steps: true, text: addedIds.has(flow.id) }] as const] : [])));
 
   // A flow a reviewer marked wrong (or never) is rejected as it stands, and nothing can use it as a subflow.
   const refused = flows.filter((flow) => human.verdicts.get(flow.id) === 'wrong' || human.verdicts.get(flow.id) === 'never');
   const results = await verifyFlows(
     flows.filter((flow) => !refused.includes(flow)),
-    { graph, nodes, grounding: deps.grounding, maxDepth: deps.config.max_subflow_depth, human: people },
+    { graph, nodes, grounding: deps.grounding, maxDepth: deps.config.max_subflow_depth, human: people, backend },
   );
   const reach = reachability(graph, nodes);
   const index = live === undefined ? undefined : indexOf(graph);
@@ -112,6 +117,9 @@ export async function buildFlows(graph: Graph, human: HumanInput, deps: EngineDe
       ...(match === undefined || match.all ? [] : [guard === undefined ? `not observed: ${match.missing.join('; ')}` : `role not explored: no run got past ${guard.guard}`]),
       ...(match?.notes ?? []),
     ];
+    // A call no route of the API repos answers: tagged at every scan, like a gap, and said why.
+    const unanswered = backend === undefined ? [] : result.flow.steps.filter((step) => step.kind === 'api' && step.request !== undefined && step.answered_by === undefined);
+    const route_reasons = unanswered.map((step) => `${step.id} ${step.request?.method} ${step.request?.path}: no route of the API repos answers it`);
     const description = override.description ?? named.description ?? result.flow.description;
     const flow: Flow = FlowSchema.parse({
       ...result.flow,
@@ -125,11 +133,11 @@ export async function buildFlows(graph: Graph, human: HumanInput, deps: EngineDe
       confidence: judgement.confidence,
       enabled: override.enabled ?? judgement.enabled,
       priority: override.priority ?? result.flow.priority,
-      tags: [...new Set([...(override.tags ?? result.flow.tags), ...gap])],
+      tags: [...new Set([...(override.tags ?? result.flow.tags).filter((tag) => tag !== NO_ROUTE), ...gap, ...(unanswered.length > 0 ? [NO_ROUTE] : [])])],
       version: overrides[id]?.version ?? result.flow.version,
     });
     set.flows.push(flow);
-    set.reasons[id] = [...(found.notes[id] ?? []), ...result.reasons, ...named.reasons, ...judgement.reasons, ...live_reasons, ...(overrides[id] === undefined ? [] : [`edited by a person (version ${flow.version})`])];
+    set.reasons[id] = [...(found.notes[id] ?? []), ...result.reasons, ...named.reasons, ...judgement.reasons, ...live_reasons, ...route_reasons, ...(overrides[id] === undefined ? [] : [`edited by a person (version ${flow.version})`])];
     set.decisions[id] = classified.decisions;
     record(started, 'judge', id, judgement.status, [...judgement.reasons, ...live_reasons]);
   }
@@ -174,7 +182,8 @@ export async function refreshFlows(project: Project, repo: Repo, graph: Graph, d
   const dir = resolve(project.root, repo.path);
   const edits = loadEdits(dir);
   const verdicts = verdictsOf(loadRules(dir));
-  const set = await buildFlows(graph, { verdicts, edits }, deps, liveFor(project, repo));
+  const backends = repo.role === 'web' ? project.config.repos.flatMap((own) => (own.role === 'api' ? (loadGraph(project, own) ?? []) : [])) : [];
+  const set = await buildFlows(graph, { verdicts, edits }, deps, liveFor(project, repo), backends);
   markStale(set, graph, loadFlows(project, repo), edits, new Set([...Object.keys(edits.overrides), ...verdicts.keys()]));
   saveFlows(project, repo, set);
   return set;

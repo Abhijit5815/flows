@@ -31,7 +31,7 @@ const WebNodeSchema = z.discriminatedUnion('kind', [
   // redirects: where it sends the browser (redirect('/account')); messages: the strings it returns for the form to show.
   node('action', z.object({ name: z.string().min(1), server: z.boolean(), redirects: z.array(z.string().startsWith('/')).optional(), messages: z.array(z.string().min(1)).optional() })),
   node('guard', Named),
-  // Not linked to a backend route (PLAN.md §1); the path may be a full URL for calls to other services.
+  // Not linked in the graph; the flow engine links it to the route that answers it. The path may be a full URL (another service).
   node('api-call', z.object({ method: MethodSchema, path: z.string().min(1) })),
 ]);
 

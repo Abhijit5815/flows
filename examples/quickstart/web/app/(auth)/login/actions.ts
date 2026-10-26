@@ -9,7 +9,7 @@ const Credentials = z.object({ email: z.string().email(), password: z.string().m
 export async function login(previous: string | undefined, formData: FormData) {
   const parsed = Credentials.safeParse({ email: formData.get('email'), password: formData.get('password') });
   if (!parsed.success) return 'Enter a valid email and password.';
-  const res = await fetch(`${API_URL}/auth/login`, { method: 'POST', body: JSON.stringify(parsed.data) });
+  const res = await fetch(`${API_URL}/users/login`, { method: 'POST', body: JSON.stringify(parsed.data) });
   if (!res.ok) return 'Wrong email or password.';
   redirect('/account');
 }

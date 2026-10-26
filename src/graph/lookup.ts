@@ -1,4 +1,4 @@
-import type { Graph, GraphNode } from './schema.ts';
+import type { GraphNode } from './schema.ts';
 
 export type Lookup = {
   node(id: string): GraphNode | undefined;
@@ -7,7 +7,7 @@ export type Lookup = {
 };
 
 // Edges indexed by node, so traversals don't rescan the edge list.
-export function lookup(graph: Graph): Lookup {
+export function lookup(graph: { nodes: readonly GraphNode[]; edges: readonly { from: string; to: string; kind: string }[] }): Lookup {
   const nodes = new Map(graph.nodes.map((node) => [node.id, node]));
   const outgoing = new Map<string, { kind: string; id: string }[]>();
   const incoming = new Map<string, { kind: string; id: string }[]>();

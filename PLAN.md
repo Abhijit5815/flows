@@ -87,7 +87,7 @@ Slice 1 stack: Next.js 14 App Router on the frontend, Express 4 + TypeScript on 
 - **Stack detection** from `package.json`, lockfiles and config; shown to the user, correctable.
 - **One adapter per framework**, mostly declarative pattern rules on tree-sitter / ast-grep, each shipped with a fixture app and an expected route list.
 - **Resolution:** the TypeScript compiler API (ts-morph) resolves constants, imports and types (e.g. route prefixes).
-- Extract: routes, handlers, auth guards, request schemas (Zod), response shapes, DB models touched (API graph); pages, components, forms, actions, guards, and the API call each action makes recorded as a step with method and path (UI graph). The API call is not linked to a backend route.
+- Extract: routes, handlers, auth guards, request schemas (Zod), response shapes, DB models touched (API graph); pages, components, forms, actions, guards, and the API call each action makes recorded as a step with method and path (UI graph). The graphs stay separate; since 2026-10-26 the flow engine links a UI flow's API call to the backend route that answers it (see §13).
 - Static parsing only; no project code is executed.
 - **Safety nets:** a coverage report per run (files parsed, skipped, unrecognised patterns), and a "possibly missed" list from pattern search plus embedding search for code that looks like handlers or actions but was not extracted. Nothing in that list becomes a flow automatically.
 - **Learning from feedback:** "you missed this" (user points at file:line) proposes a pattern rule, confirmed by the user and saved in `.flows/`. "Not a flow" saves an exclusion rule. Detected frameworks, base paths, entry points and shared guards are cached; re-analysis only touches changed files (content hash).
@@ -193,7 +193,7 @@ First release: Next.js 14 (App Router) frontend and Express 4 + TypeScript backe
 5. Team: the user plus Claude. No time estimates.
 6. Local single-user mode first.
 7. Build our own Decider; the embedding model is free, open-source, local and user-selectable; the LLM is user-supplied (API key or local).
-8. UI flows and API flows are separate and never linked to each other. Both inputs (source and live URL) feed each.
+8. UI flows and API flows are separate flows. Both inputs (source and live URL) feed each. Changed 2026-10-26: a UI flow's API step names the API flow whose route answers it (`answered_by`), see §13.
 9. Parsing is static only in v1. Learned rules live in the user's repo (`.flows/`).
 10. Flows are test-framework-agnostic.
 11. Subflows are reusable and user-editable; nesting depth cap of 3 (confirmed 2026-10-20).
@@ -225,6 +225,7 @@ First release: Next.js 14 (App Router) frontend and Express 4 + TypeScript backe
   - **One project, its own data:** everything Flows keeps for a project is in that project's `.flows/` or its own cache folder, named by the project id and a hash of the project's folder, so a copied project or a second clone never sees another's flows, runs, logins or answers. Only the downloaded models are shared.
   - **Open:** `answers.jsonl` keeps answers for prompts the code no longer produces; the drift counts in `flows eval` are per machine.
 - Negative cases in the flows, decided 2026-10-26 (from the QA pass): steps carry what source says besides success. An API step gets its error responses (guards first, with a factory guard's argument in its name, `requireRole('admin')`; then middleware, then the handler; one per message), and its request body's fields from the Zod schema the route validates (through `pick`, `omit`, `extend`, `partial`). A UI step that runs an action gets the action's redirect as its check and the strings it returns as errors. The verifier proves each against the graph and drops what it can't, with the reason. Not covered: class-validator DTOs, how a token is sent, example values for path parameters.
+- UI calls linked to backend routes, decided 2026-10-26 (from the QA pass): a scan builds every graph before any flows, and a web repo's API steps are matched to the project's API routes by method and path pattern (the most specific when several match; an `ALL` route never answers). A matched step gets `answered_by` (the API flow and the route as evidence) and borrows the route's check, errors and request body; the verifier proves them in the API graphs. A call no route answers tags its flow `no backend route` and says which step, when the project has an API repo to compare with. Not covered: a base URL that differs between environments (the default in source is used), and proxies that rewrite paths.
 - Hosted LLM check (left open when Phase 1 closed, 2026-10-19): the hosted path of the LLM gateway (Claude through the Anthropic SDK, or any OpenAI-compatible provider) is tested only against a fake server. A real call still needs a user's own API key; Phase 1 closed with the local model (Ollama `llama3.2:3b`) verified live.
 
 ## 14. First supported stack (slice 1)

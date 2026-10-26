@@ -1,7 +1,7 @@
 import { Background, Controls, Handle, MarkerType, Position, ReactFlow, type Edge, type Node, type NodeProps } from '@xyflow/react';
 import { useMemo, type CSSProperties } from 'react';
 import type { Category } from '../../model/category.ts';
-import { NOT_OBSERVED, ROLE_NOT_EXPLORED, STALE, unstable, type Item } from './model.ts';
+import { NO_ROUTE, NOT_OBSERVED, ROLE_NOT_EXPLORED, STALE, unstable, type Item } from './model.ts';
 
 // PLAN.md Phase 5: nodes are steps, lanes are categories. Each flow is a row in its category's lane: a header
 // node, then its steps left to right. Positions are computed here; nothing is dragged.
@@ -41,6 +41,7 @@ function FlowNode({ data }: NodeProps<Node<FlowData, 'flow'>>) {
         {flow.tags.includes(NOT_OBSERVED) ? <span className="badge gap">not observed</span> : null}
         {flow.tags.includes(ROLE_NOT_EXPLORED) ? <span className="badge gap">role not explored</span> : null}
         {flow.tags.includes(STALE) ? <span className="badge warn" title="it cites code the repo no longer has">stale</span> : null}
+        {flow.tags.includes(NO_ROUTE) ? <span className="badge warn" title="it calls the API at a path no route answers">no backend route</span> : null}
         {flow.enabled ? null : <span className="badge muted">off</span>}
       </div>
       <div className="flow-name">{flow.name}</div>

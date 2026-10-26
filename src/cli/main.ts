@@ -20,7 +20,7 @@ import { learnedExamples, withLearned } from '../engine/learning.ts';
 import { OptionalLlm } from '../engine/llm.ts';
 import { loadFlows, type FlowSet } from '../engine/store.ts';
 import { stepDetails, stepLine } from '../engine/views.ts';
-import { STALE } from '../model/tags.ts';
+import { NO_ROUTE, STALE } from '../model/tags.ts';
 import type { Graph } from '../graph/schema.ts';
 import { loadGraph, repoFile } from '../graph/store.ts';
 import { stackOf } from '../ingest/detect.ts';
@@ -197,6 +197,8 @@ async function scanAll(project: Project): Promise<void> {
   const embedder = createEmbeddingProvider(project.config.embedder, join(storageDir(project), 'models'), progress());
   const engine = engineDeps(project, embedder);
   const { min_similarity: minSimilarity, limit } = project.config.possibly_missed;
+  // Every graph first, then the flows: a web repo's calls are linked to the routes of this scan's API graphs.
+  const scanned: { repo: Repo; graph: Graph }[] = [];
   for (const repo of project.config.repos) {
     const { stack, graph, coverage, ms } = await scanRepo(project, repo, { embedder, possiblyMissed: { minSimilarity, limit } });
     console.log(`${repo.role}  ${repo.path}  ${stack.framework ?? 'unknown framework'}${stack.version ? ` ${stack.version}` : ''}  (${ms.toFixed(0)} ms)`);
@@ -213,8 +215,13 @@ async function scanAll(project: Project): Promise<void> {
     if (coverage.unrecognised.length > 0) console.log(`  unrecognised (${coverage.unrecognised.length}):`);
     for (const note of coverage.unrecognised) console.log(`    ${note.file}:${note.line}  ${note.reason}`);
     if (coverage.missed.length > 0) console.log(`  possibly missed: ${coverage.missed.length}; see "flows show missed" (listed for review, never added to the graph)`);
+    scanned.push({ repo, graph });
+  }
+  for (const { repo, graph } of scanned) {
     const set = await refreshFlows(project, repo, graph, engine);
+    console.log(`${repo.role}  ${repo.path}`);
     console.log(flowSummary(set));
+    for (const flow of set.flows.filter((candidate) => candidate.tags.includes(NO_ROUTE))) console.log(`  no backend route: ${flow.id}  ${flow.name}: ${(set.reasons[flow.id] ?? []).filter((reason) => reason.endsWith('no route of the API repos answers it')).join('; ')}`);
     for (const note of set.notes) console.log(`    ${note}`);
     for (const flow of set.flows.filter((candidate) => candidate.tags.includes(STALE))) console.log(`  stale: ${flow.id}  ${flow.name}: ${(set.reasons[flow.id] ?? []).filter((reason) => reason.startsWith('stale')).join('; ')}`);
     for (const flow of set.gone) console.log(`  gone: ${flow.id}  ${flow.name}: ${flow.reason}`);

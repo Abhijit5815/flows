@@ -11,6 +11,7 @@ export function stepDetails(step: Flow['steps'][number]): string[] {
   const body = step.request?.body;
   const fields = body?.fields.map((field) => `${field.name}${field.required ? '' : '?'}: ${[field.type, ...field.rules].join(' ')}`) ?? [];
   return [
+    ...(step.answered_by?.evidence[0].type !== 'code' ? [] : [`answered by ${step.answered_by.evidence[0].node_id.replace(/^api:route:/, '')} (${step.answered_by.flow})`]),
     ...(body === undefined ? [] : [`body ${body.schema} { ${fields.join(', ')} }`]),
     ...(step.errors ?? []).map((error) => (error.kind === 'api' ? `error ${error.status} from ${error.by}${error.message === undefined ? '' : `: ${error.message}`}` : `error: ${error.message}`)),
   ];

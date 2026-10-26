@@ -57,6 +57,8 @@ export const StepSchema = z
     evidence: EvidenceListSchema,
     check: CheckSchema.nullable(),
     errors: z.array(ErrorSchema).min(1).optional(),
+    // A UI flow's API call: the backend route that answers it (its API flow, and the route as evidence).
+    answered_by: z.object({ flow: z.string().min(1), evidence: EvidenceListSchema }).optional(),
     enabled: z.boolean(),
     subflow_ref: z.string().min(1).optional(),
   })
@@ -69,6 +71,9 @@ export const StepSchema = z
     }
     if (step.check !== null && step.check.kind !== step.kind) {
       ctx.addIssue({ code: 'custom', path: ['check', 'kind'], message: 'a check has the same kind as its step; subflow steps have no check' });
+    }
+    if (step.answered_by !== undefined && step.kind !== 'api') {
+      ctx.addIssue({ code: 'custom', path: ['answered_by'], message: 'only api steps are answered by a route' });
     }
     if (step.errors?.some((error) => error.kind !== step.kind)) {
       ctx.addIssue({ code: 'custom', path: ['errors'], message: 'errors have the same kind as their step; subflow steps have none' });

@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { API_VERSION } from '@/config';
 import { requireAuth, requireRole } from '@/middleware/auth';
 import { AdminRoutes } from './admin.routes';
+import cartRouter from './cart.routes';
 import ordersRouter from './orders.routes';
 import { crudRouter } from './products.routes';
 import usersRouter from './users.routes';
@@ -15,6 +16,7 @@ api.use(API_VERSION, v1);
 const MOUNTS = [
   { prefix: '/users', router: usersRouter },
   { prefix: '/orders', router: ordersRouter },
+  { prefix: '/cart', router: cartRouter },
 ];
 for (const { prefix, router } of MOUNTS) v1.use(prefix, router);
 

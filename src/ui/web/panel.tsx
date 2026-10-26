@@ -5,7 +5,7 @@ import type { Flow } from '../../model/flow.ts';
 import type { Evidence } from '../../model/evidence.ts';
 import type { Snippet } from '../api.ts';
 import { blobUrl, get } from './client.ts';
-import { NOT_OBSERVED, place, ROLE_NOT_EXPLORED, STALE, type Item } from './model.ts';
+import { NO_ROUTE, NOT_OBSERVED, place, ROLE_NOT_EXPLORED, STALE, type Item } from './model.ts';
 
 const observedPath = (ref: string) => `/api/observed?ref=${encodeURIComponent(ref)}`;
 
@@ -139,6 +139,7 @@ export function Panel({ item, onClose, children }: { item: Item; onClose: () => 
         {flow.tags.includes(NOT_OBSERVED) ? <span className="badge gap">not observed</span> : null}
         {flow.tags.includes(ROLE_NOT_EXPLORED) ? <span className="badge gap">role not explored</span> : null}
         {flow.tags.includes(STALE) ? <span className="badge warn" title="it cites code the repo no longer has">stale</span> : null}
+        {flow.tags.includes(NO_ROUTE) ? <span className="badge warn" title="it calls the API at a path no route answers">no backend route</span> : null}
         <span className="badge">{flow.enabled ? 'enabled' : 'disabled'}</span>
       </div>
       {flow.description === undefined ? null : <p>{flow.description}</p>}

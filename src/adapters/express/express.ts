@@ -4,8 +4,8 @@ import { Node, SyntaxKind } from 'ts-morph';
 import { z } from 'zod';
 import { PatternRuleSchema } from '../../ingest/match.ts';
 import { holderOf, importOf, inProject, isFunctionLike, keyOf, NO_ENV, qualifiedName, type Env } from '../../ingest/resolve.ts';
-import type { Field } from '../../model/flow.ts';
 import type { ExtractContext, FrameworkAdapter, Unrecognised } from '../adapter.ts';
+import { parsedSchemas, schemaNode } from '../schemas.ts';
 
 // The rules are data (rules.json); this file follows what they match: routers, mounts, routes, handlers,
 // guards, request schemas, responses and the Prisma models a handler touches.
@@ -79,71 +79,6 @@ function libraryStatus(expression: Node): number | undefined {
   const library = module === undefined ? undefined : RULES.guards.libraries[module];
   if (library === undefined || typeof library === 'number') return library;
   return called.includes(library.call) ? library.status : undefined;
-}
-
-// A Zod schema (built from z, or derived from another schema) or a class-validator DTO.
-function isSchema(declaration: Node, depth = 0): boolean {
-  if (Node.isClassDeclaration(declaration)) return declaration.getProperties().some((property) => property.getDecorators().length > 0);
-  if (!Node.isVariableDeclaration(declaration) || depth > 4) return false;
-  let root = declaration.getInitializer();
-  while (Node.isCallExpression(root) || Node.isPropertyAccessExpression(root)) root = root.getExpression();
-  if (!Node.isIdentifier(root)) return false;
-  if (importOf(root)?.module === 'zod') return true;
-  const source = root.getDefinitionNodes()[0];
-  return source !== undefined && isSchema(source, depth + 1);
-}
-
-// A field's Zod chain, z.string().email().min(8).optional(): the base type, then every other link as a rule.
-function fieldOf(name: string, value: Node): Field {
-  const chain: string[] = [];
-  let base = value;
-  while (Node.isCallExpression(base)) {
-    const callee = base.getExpression();
-    if (!Node.isPropertyAccessExpression(callee)) break;
-    const args = base.getArguments().map((arg) => arg.getText()).join(', ');
-    chain.unshift(args === '' ? callee.getName() : args.length <= 60 ? `${callee.getName()}(${args})` : `${callee.getName()}(…)`);
-    base = callee.getExpression();
-  }
-  // From z the first link is the type (string, enum([...])); otherwise the base is another schema, used as the type.
-  const [type, ...rules] = Node.isIdentifier(base) && importOf(base)?.module === 'zod' && chain.length > 0 ? chain : [base.getText(), ...chain];
-  const bare = type.replace(/\(.*$/s, '');
-  return {
-    name,
-    type: bare,
-    required: !rules.some((rule) => rule === 'optional' || rule === 'nullish' || rule.startsWith('default(')),
-    rules: [...(bare === type ? [] : [type]), ...rules.filter((rule) => rule !== 'optional')],
-  };
-}
-
-// The fields of a Zod object schema, followed through the schemas it is derived from (pick, omit, extend, partial).
-// shortcut: class-validator DTOs and shapes built in code give no fields; read them when a team needs them.
-function zodFields(expression: Node | undefined, depth = 0): Field[] | undefined {
-  if (expression === undefined || depth > 4) return undefined; // depth: hops from one schema to another
-  if (Node.isVariableDeclaration(expression)) return zodFields(expression.getInitializer(), depth);
-  if (Node.isIdentifier(expression)) return zodFields(expression.getDefinitionNodes()[0], depth + 1);
-  if (!Node.isCallExpression(expression)) return undefined;
-  const callee = expression.getExpression();
-  if (!Node.isPropertyAccessExpression(callee)) return undefined;
-  const [arg] = expression.getArguments();
-  const literal = Node.isObjectLiteralExpression(arg) ? arg : undefined;
-  const own = () => literal?.getProperties().flatMap((property) => (Node.isPropertyAssignment(property) ? [fieldOf(property.getName(), property.getInitializerOrThrow())] : [])) ?? [];
-  const base = callee.getExpression();
-  if (callee.getName() === 'object' && Node.isIdentifier(base) && importOf(base)?.module === 'zod') return literal === undefined ? undefined : own();
-  const inner = zodFields(base, depth);
-  if (inner === undefined) return undefined;
-  const keys = literal?.getProperties().flatMap((property) => (Node.hasName(property) ? [property.getName()] : [])) ?? [];
-  switch (callee.getName()) {
-    case 'pick':
-      return inner.filter((field) => keys.includes(field.name));
-    case 'omit':
-      return inner.filter((field) => !keys.includes(field.name));
-    case 'extend':
-      return [...inner.filter((field) => !keys.includes(field.name)), ...own()];
-    case 'partial':
-      return inner.map((field) => ({ ...field, required: false }));
-    default:
-      return inner; // strict, refine, transform, describe: the same fields
-  }
 }
 
 // The identifier at the base of a call chain (res in res.status(201).json(...)) is one of the response parameters.
@@ -286,11 +221,8 @@ function extract({ facts, files, read, resolver, graph, guards }: ExtractContext
   }
 
   const addSchema = (route: string, expression: Node, env: Env): void => {
-    const declaration = resolver.declaration(expression, env);
-    if (declaration === undefined || !isSchema(declaration)) return;
-    const name = qualifiedName(declaration) ?? declaration.getText();
-    const fields = zodFields(declaration);
-    graph.edge(route, graph.add(keyOf(declaration), { kind: 'request-schema', name, ...resolver.where(declaration), attrs: { name, ...(fields === undefined || fields.length === 0 ? {} : { fields }) } }), 'validated-by');
+    const schema = schemaNode(resolver, graph, expression, env);
+    if (schema !== undefined) graph.edge(route, schema, 'validated-by');
   };
 
   const addMiddleware = (route: string, { node, env }: Uses): void => {
@@ -399,13 +331,6 @@ function extract({ facts, files, read, resolver, graph, guards }: ExtractContext
       const declaration = Node.isIdentifier(name) ? name.getDefinitionNodes()[0] : undefined;
       const callee = Node.isVariableDeclaration(declaration) ? declaration.getInitializer() : declaration;
       return callee !== undefined && isFunctionLike(callee) && inProject(callee) && callee !== fn ? modelsIn(callee, depth + 1) : [];
-    });
-
-  // Zod schemas a handler parses itself: schema.parse(req.body), safeParse, parseAsync.
-  const parsedSchemas = (fn: Node): Node[] =>
-    fn.getDescendantsOfKind(SyntaxKind.CallExpression).flatMap((call) => {
-      const callee = call.getExpression();
-      return Node.isPropertyAccessExpression(callee) && /^(safe)?[pP]arse(Async)?$/.test(callee.getName()) ? [callee.getExpression()] : [];
     });
 
   // A response node per status a function sends, linked from the handler, guard or middleware it belongs to.

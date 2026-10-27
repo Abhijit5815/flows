@@ -402,6 +402,7 @@ function extract({ files, facts, resolver, graph }: ExtractContext): Unrecognise
 
   const pages: { key: string; path: string; folder: string[] }[] = [];
   const layouts: { key: string; folder: string[] }[] = [];
+  const routeFiles: string[] = [];
   for (const file of files) {
     if (!file.startsWith(`${appDir}/`)) continue;
     const segments = file.slice(appDir.length + 1).split('/');
@@ -409,7 +410,7 @@ function extract({ files, facts, resolver, graph }: ExtractContext): Unrecognise
     const folder = segments.slice(0, -1);
     if (kind === undefined || folder.some((segment) => segment.startsWith('_'))) continue; // private folders are not routes
     if (kind === 'route') {
-      notes.push({ file, line: 1, reason: 'route handler: API endpoints inside the Next.js app are not read in slice 1 (API flows come from the backend)' });
+      routeFiles.push(file);
       continue;
     }
     if (folder.some(isParallelOrIntercepting)) {
@@ -472,6 +473,10 @@ function extract({ files, facts, resolver, graph }: ExtractContext): Unrecognise
       const call = resolver.nodeAt(file, fact.start, fact.end);
       if (call !== undefined && !reached.has(keyOf(call))) notes.push({ file, line: fact.line, reason: `API call ${call.getText().slice(0, 60)} is not reached from any page` });
     }
+  }
+  // Route handlers are the app's API: read for the api role (the nextjs-api adapter), so one note says how.
+  if (routeFiles.length > 0) {
+    notes.push({ file: routeFiles[0], line: 1, reason: `${routeFiles.length} route handler(s) (app/**/route.ts) are API routes: register this folder with --role api too to read them` });
   }
   return notes;
 }

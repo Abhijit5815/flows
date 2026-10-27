@@ -2,9 +2,10 @@ import type { Role } from '../config/project.ts';
 import { ConfigError } from '../shared/errors.ts';
 import type { FrameworkAdapter } from './adapter.ts';
 import { expressAdapter } from './express/express.ts';
+import { nextApiAdapter } from './nextjs-api/nextjs-api.ts';
 import { nextAppAdapter } from './nextjs-app/nextjs.ts';
 
-export const ADAPTERS: readonly FrameworkAdapter[] = [expressAdapter, nextAppAdapter];
+export const ADAPTERS: readonly FrameworkAdapter[] = [expressAdapter, nextAppAdapter, nextApiAdapter];
 
 // For a framework the user names (config or CLI): it must exist and read repos of this role.
 export function adapterFor(id: string, role: Role, adapters: readonly FrameworkAdapter[] = ADAPTERS): FrameworkAdapter {

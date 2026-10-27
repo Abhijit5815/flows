@@ -229,8 +229,11 @@ async function scanAll(project: Project): Promise<void> {
     const cached = coverage.sources - coverage.parsed.length;
     console.log(`  files: ${coverage.files} listed, ${coverage.sources} source (${coverage.parsed.length} parsed now, ${cached} unchanged), ${coverage.parseErrors.length} with parse errors`);
     for (const { file, errors } of coverage.parseErrors) console.log(`    ${file}: ${errors} parse error(s); matches elsewhere in the file are still used`);
-    if (coverage.unrecognised.length > 0) console.log(`  unrecognised (${coverage.unrecognised.length}):`);
-    for (const note of coverage.unrecognised) console.log(`    ${note.file}:${note.line}  ${note.reason}`);
+    // The hint to read route handlers as an API says nothing once this folder is registered as api too.
+    const asApi = repo.role === 'web' && project.config.repos.some((other) => other.role === 'api' && other.path === repo.path);
+    const unrecognised = coverage.unrecognised.filter((note) => !(asApi && note.reason.includes('--role api too')));
+    if (unrecognised.length > 0) console.log(`  unrecognised (${unrecognised.length}):`);
+    for (const note of unrecognised) console.log(`    ${note.file}:${note.line}  ${note.reason}`);
     if (coverage.missed.length > 0) console.log(`  possibly missed: ${coverage.missed.length}; see "flows show missed" (listed for review, never added to the graph)`);
     scanned.push({ repo, graph });
   }

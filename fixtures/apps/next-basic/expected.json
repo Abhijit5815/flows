@@ -106,6 +106,6 @@
     "middleware.ts guards what its matcher lists: /account, /account/orders and /cart.",
     "lib/legacy.ts:5 is a fetch no page reaches; the coverage report lists it.",
     "missed: resetPassword (actions.ts:18) is a server action no form uses; the pattern search lists it, and it never enters the graph. Its fetch (actions.ts:19) is unreached, so it is unrecognised too.",
-    "Not pages: loading.tsx, app/_components (a private folder), app/api/health/route.ts (a route handler; API flows come from the backend in slice 1) and app/@modal (a parallel route)."
+    "Not pages: loading.tsx, app/_components (a private folder), app/api/health/route.ts (a route handler: the nextjs-api adapter reads it when the folder is also registered as api) and app/@modal (a parallel route)."
   ]
 }

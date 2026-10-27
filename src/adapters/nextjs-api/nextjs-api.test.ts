@@ -46,7 +46,7 @@ test('each exported method of a route file is a route, with its responses and th
     const flow = candidates(graph).flows.find((candidate) => candidate.name === name);
     return flow?.steps.flatMap((step) => [`check ${step.check?.kind === 'api' ? step.check.status : '-'}`, ...stepDetails(step)]);
   };
-  assert.deepEqual(details('POST /api/items'), ['check 201', 'body itemSchema { name: string min(1) }', 'error 401 from the handler: Unauthorized']);
+  assert.deepEqual(details('POST /api/items'), ['check 201', 'body itemSchema { name: string min(1) }', 'error 401 from the handler: Unauthorized (when if (!signedIn))']);
   assert.deepEqual(details('DELETE /api/items/:id'), ['check 204'], "a schema for the route's params is not a body");
 });
 
@@ -73,5 +73,5 @@ test('the proxy guards API routes but not the ones it lets through; helper respo
   const guards = (path: string) => graph.edges.filter((edge) => edge.from === `api:route:GET ${path}` && edge.kind === 'guarded-by').length;
   assert.deepEqual([guards('/api/notes'), guards('/api/auth/session')], [1, 0]);
   const details = candidates(graph).flows.find((flow) => flow.name === 'GET /api/notes')?.steps.flatMap(stepDetails);
-  assert.deepEqual(details, ['error 401 from middleware: Sign in first', 'error 403 from the handler: Not yours']);
+  assert.deepEqual(details, ['error 401 from middleware: Sign in first (when without a valid session)', 'error 403 from the handler: Not yours']);
 });

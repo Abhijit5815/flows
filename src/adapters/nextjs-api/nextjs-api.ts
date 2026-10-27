@@ -4,6 +4,7 @@ import { holderOf, inProject, isFunctionLike, keyOf } from '../../ingest/resolve
 import { HTTP_METHODS } from '../../model/flow.ts';
 import type { ExtractContext, FrameworkAdapter, Unrecognised } from '../adapter.ts';
 import { middlewareGuard, routePath } from '../nextjs-app/nextjs.ts';
+import { conditionOf, tokenIn } from '../hints.ts';
 import { parsedSchemas, schemaNode } from '../schemas.ts';
 
 // Next.js App Router route handlers (app/**/route.ts) are an API: each exported GET, POST, ... is a route, read for
@@ -21,7 +22,7 @@ function extract({ files, resolver, graph }: ExtractContext): Unrecognised[] {
   // its own body and in the app's functions it calls (return unauthorized(), error.toResponse()), one call deep.
   // A status computed at run time (from a lookup table) is not known, so that response is left out.
   const addResponses = (handler: string, name: string, fn: Node): void => {
-    const sent = new Map<number, { fields: string[]; messages: string[]; site: Node }>();
+    const sent = new Map<number, { fields: string[]; messages: string[]; site: Node; when: Record<string, string>; token?: string }>();
     const helpers = fn.getDescendantsOfKind(SyntaxKind.CallExpression).flatMap((call) => {
       const callee = call.getExpression();
       const id = Node.isPropertyAccessExpression(callee) ? callee.getNameNode() : callee;
@@ -43,15 +44,20 @@ function extract({ files, resolver, graph }: ExtractContext): Unrecognised[] {
       const texts = [body, ...properties.map((property) => (Node.isPropertyAssignment(property) ? property.getInitializerOrThrow() : undefined))];
       const messages = texts.flatMap((text) => (Node.isStringLiteral(text) || Node.isNoSubstitutionTemplateLiteral(text) ? [text.getLiteralValue()] : []));
       const fields = properties.flatMap((property) => (Node.hasName(property) ? [property.getName()] : []));
-      const seen = sent.get(status);
-      if (seen === undefined) sent.set(status, { fields, messages, site: node });
+      let entry = sent.get(status);
+      if (entry === undefined) sent.set(status, (entry = { fields, messages, site: node, when: {} }));
       else {
+        const seen = entry;
         seen.fields.push(...fields.filter((field) => !seen.fields.includes(field)));
         seen.messages.push(...messages.filter((message) => !seen.messages.includes(message)));
       }
+      entry.token ??= status < 300 ? tokenIn(object, resolver) : undefined;
+      const condition = conditionOf(node);
+      if (condition !== undefined) for (const message of messages.length > 0 ? messages : ['']) entry.when[message] ??= condition;
     }
-    for (const [status, { fields, messages, site }] of sent) {
-      const response = graph.add(`${handler}#${status}`, { kind: 'response', name: `${name}#${status}`, ...resolver.where(site), attrs: { status, fields, ...(messages.length > 0 ? { messages } : {}) } });
+    for (const [status, { fields, messages, site, when, token }] of sent) {
+      const extra = { ...(messages.length > 0 ? { messages } : {}), ...(Object.keys(when).length > 0 ? { when } : {}), ...(token === undefined ? {} : { token }) };
+      const response = graph.add(`${handler}#${status}`, { kind: 'response', name: `${name}#${status}`, ...resolver.where(site), attrs: { status, fields, ...extra } });
       graph.edge(handler, response, 'responds-with');
     }
   };

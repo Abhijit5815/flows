@@ -106,9 +106,12 @@ test('errors, a request body and a redirect check stay only when source backs th
   assert.ok(submit.check?.kind === 'ui' && submit.errors?.[0].kind === 'ui');
   submit.check.page = '/admin';
   submit.errors.push({ kind: 'ui', message: 'Welcome back!', evidence: submit.errors[0].evidence });
+  assert.ok(submit.action?.button !== undefined);
+  submit.action.button.text = 'Delete everything';
   const result = await verify(login, web);
-  assert.deepEqual([result.flow.steps[1].check, result.flow.steps[1].errors?.length], [null, 2]);
+  assert.deepEqual([result.flow.steps[1].check, result.flow.steps[1].errors?.length, result.flow.steps[1].action], [null, 2, undefined]);
   assert.ok(result.reasons.some((reason) => reason.includes('redirect to /admin')) && result.reasons.some((reason) => reason.includes('"Welcome back!"')));
+  assert.ok(result.reasons.some((reason) => reason.includes('action dropped')), 'an action the form does not have is dropped');
 });
 
 // PLAN.md Phase 4 exit: zero fabricated routes or steps pass the verifier.

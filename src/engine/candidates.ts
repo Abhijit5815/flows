@@ -4,7 +4,7 @@ import { FALLBACK_CATEGORY_ID } from '../model/category.ts';
 import { HTTP_METHODS, type Flow } from '../model/flow.ts';
 import { FlowsError } from '../shared/errors.ts';
 import { sha256 } from '../shared/hash.ts';
-import { claimOf, evidenceOf, flowName, label } from './describe.ts';
+import { actionOf, claimOf, evidenceOf, flowName, label } from './describe.ts';
 
 type Step = Flow['steps'][number];
 export type DraftStep = Omit<Step, 'id'>;
@@ -60,6 +60,7 @@ export const uiStep = (cited: GraphNode[]): DraftStep => {
     claim: template('ui', cited),
     evidence: cited.map(evidenceOf),
     check: action !== undefined && redirects.length === 1 ? { kind: 'ui', page: redirects[0], evidence: [evidenceOf(action)] } : null,
+    ...(actionOf(cited) === undefined ? {} : { action: actionOf(cited) }),
     ...(action !== undefined && outcomes?.messages !== undefined ? { errors: outcomes.messages.map((message) => ({ kind: 'ui' as const, message, evidence: [evidenceOf(action)] })) } : {}),
     enabled: true,
   };
@@ -76,9 +77,24 @@ export function routeErrors(route: GraphNode, nodes: Lookup): NonNullable<Step['
     nodes.out(owner.id, 'responds-with').flatMap((response) => {
       if (response.kind !== 'response' || response.attrs.status === undefined || response.attrs.status < 400) return [];
       const error = { kind: 'api' as const, status: response.attrs.status, by: errorSource(owner, route), evidence: [evidenceOf(response)] };
-      return response.attrs.messages === undefined ? [error] : response.attrs.messages.map((message) => ({ ...error, message }));
+      return (response.attrs.messages ?? [undefined]).map((message) => {
+        const when = errorWhen(owner, response, message, route, nodes);
+        return { ...error, ...(message === undefined ? {} : { message }), ...(when === undefined ? {} : { when }) };
+      });
     }),
   );
+}
+
+// When an error happens, for a test to set it up: the condition the code sends it under, else what its sender is
+// known to check (a guard: no valid session, or a session without what it requires; validation: a body that breaks
+// the schema).
+export function errorWhen(owner: GraphNode, response: GraphNode, message: string | undefined, route: GraphNode, nodes: Lookup): string | undefined {
+  const status = response.kind === 'response' ? response.attrs.status : undefined;
+  const schema = nodes.out(route.id, 'validated-by').find((node) => node.kind === 'request-schema');
+  if (owner.kind === 'middleware' && status === 400 && schema !== undefined) return `the body breaks ${label(schema)}`;
+  // A guard's own code (if (!token)) says less to a tester than what it checks.
+  if (owner.kind === 'guard') return status === 401 ? 'without a valid session' : `signed in without what ${label(owner)} requires`;
+  return response.kind === 'response' ? response.attrs.when?.[message ?? ''] : undefined;
 }
 
 // The body a route validates, with its fields; only for methods that send one.

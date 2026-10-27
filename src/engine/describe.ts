@@ -81,6 +81,19 @@ const shown = (act: readonly (GraphNode | undefined)[]) => {
 // A label a person presses, as what they do: "Sign Out" -> "sign out", "Prev" -> "press Prev".
 export const pressing = (text: string): string => (startsWithVerb(text) ? spoken(text) : `press ${text}`);
 
+// A UI step's action as data: the fields a form asks for and the button pressed, each with a selector a test tool can
+// use as is ([name="email"]; Playwright's role=button[name="Sign in"]).
+export function actionOf(act: readonly GraphNode[]): Flow['steps'][number]['action'] {
+  const [first] = act;
+  if (first?.kind !== 'form' && first?.kind !== 'action') return undefined;
+  const text = shown(act);
+  return {
+    kind: first.kind === 'form' ? 'submit' : 'click',
+    fields: first.kind === 'form' ? first.attrs.fields.map((name) => ({ name, selector: `[name="${name}"]` })) : [],
+    ...(text === undefined ? {} : { button: { text, selector: `role=button[name="${text.replace(/"/g, '\\"')}"]` } }),
+  };
+}
+
 // A flow's name says what a user can do, in plain words; the page or route it starts at is shown under the name, so
 // it isn't repeated in it.
 export const userCan = (doing: string): string => `User can ${doing}`;

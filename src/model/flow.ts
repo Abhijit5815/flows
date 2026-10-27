@@ -38,8 +38,9 @@ export const FieldSchema = z.object({ name: z.string().min(1), type: z.string().
 // What else a step can end in, from source: an error response (by the guard, middleware or handler that sends it)
 // or a message a form action returns. These are the negative cases.
 const ErrorSchema = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('api'), status: z.int().min(400).max(599), by: z.string().min(1), message: z.string().min(1).optional(), evidence: EvidenceListSchema }),
-  z.object({ kind: z.literal('ui'), message: z.string().min(1), evidence: EvidenceListSchema }),
+  // when: what makes it happen, in words where Flows can say ("no product matches") and as the code's condition otherwise.
+  z.object({ kind: z.literal('api'), status: z.int().min(400).max(599), by: z.string().min(1), message: z.string().min(1).optional(), when: z.string().min(1).optional(), evidence: EvidenceListSchema }),
+  z.object({ kind: z.literal('ui'), message: z.string().min(1), when: z.string().min(1).optional(), evidence: EvidenceListSchema }),
 ]);
 
 export const StepSchema = z
@@ -57,6 +58,21 @@ export const StepSchema = z
     evidence: EvidenceListSchema,
     check: CheckSchema.nullable(),
     errors: z.array(ErrorSchema).min(1).optional(),
+    // What a person does in a UI step, as data for a test tool: the fields to fill and the button to press, each with a
+    // selector (CSS for a field by its name, Playwright's role selector for a button by its label).
+    action: z
+      .object({
+        kind: z.enum(['submit', 'click']),
+        fields: z.array(z.object({ name: z.string().min(1), selector: z.string().min(1) })),
+        button: z.object({ text: z.string().min(1), selector: z.string().min(1) }).optional(),
+      })
+      .optional(),
+    // The parameters in a step's path (/orders/:orderId, /products/[id]): their type, and an example value when a live
+    // run used one.
+    params: z.array(z.object({ name: z.string().min(1), type: z.enum(['number', 'string']), example: z.string().min(1).optional() })).min(1).optional(),
+    // A Log-in step's session: how a request carries it (a header and scheme, or a cookie), and where the login
+    // response puts the token ("data.token").
+    session: z.object({ header: z.string().min(1).optional(), scheme: z.string().min(1).optional(), cookie: z.string().min(1).optional(), token: z.string().min(1).optional() }).optional(),
     // A UI flow's API call: the backend route that answers it (its API flow, and the route as evidence).
     answered_by: z.object({ flow: z.string().min(1), evidence: EvidenceListSchema }).optional(),
     enabled: z.boolean(),

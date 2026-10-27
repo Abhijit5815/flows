@@ -69,6 +69,7 @@
       "steps": [
         "ui: Open / | check /",
         "ui: Press Sign out",
+        "  action: press role=button[name=\"Sign out\"]",
         "api: Calls POST /api/auth/logout"
       ]
     },
@@ -78,6 +79,7 @@
       "steps": [
         "ui: Open /login | check /login",
         "ui: Fill in email and password, then press Sign in | check /account",
+        "  action: fill [name=\"email\"], [name=\"password\"]; press role=button[name=\"Sign in\"]",
         "  error: Enter a valid email and password.",
         "  error: Wrong email or password.",
         "api: Calls POST /api/auth/login"
@@ -90,6 +92,7 @@
         "subflow: Log in first: guarded by middleware -> ui-082b51bb",
         "ui: Open /account | check /account",
         "ui: Fill in name, email, street and city, then press Save",
+        "  action: fill [name=\"name\"], [name=\"email\"], [name=\"street\"], [name=\"city\"]; press role=button[name=\"Save\"]",
         "api: Calls PATCH /api/me"
       ]
     },
@@ -99,6 +102,7 @@
       "steps": [
         "ui: Open /products | check /products",
         "ui: Press Add to cart",
+        "  action: press role=button[name=\"Add to cart\"]",
         "api: Calls POST /api/cart/items"
       ]
     },
@@ -109,6 +113,7 @@
         "subflow: Log in first: guarded by middleware -> ui-082b51bb",
         "ui: Open /account/orders | check /account/orders",
         "ui: Press Cancel",
+        "  action: press role=button[name=\"Cancel\"]",
         "api: Calls DELETE /api/orders/:orderId"
       ]
     }

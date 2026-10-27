@@ -6,9 +6,9 @@
       "steps": [
         "subflow: Log in first: guarded by requireAuth, requireRole('admin') -> api-da0be8b0",
         "api: Call GET /api/v1/admin/stats (handled by AdminController.stats) | check 200 users orders",
-        "  error 401 from requireAuth: missing token",
-        "  error 401 from requireAuth: invalid token",
-        "  error 403 from requireRole('admin'): forbidden"
+        "  error 401 from requireAuth: missing token (when without a valid session)",
+        "  error 401 from requireAuth: invalid token (when without a valid session)",
+        "  error 403 from requireRole('admin'): forbidden (when signed in without what requireRole('admin') requires)"
       ]
     },
     {
@@ -17,9 +17,9 @@
       "steps": [
         "subflow: Log in first: guarded by requireAuth -> api-da0be8b0",
         "api: Call GET /api/v1/orders/:orderId (handled by orders.getById) | check 200 success data error timestamp",
-        "  error 401 from requireAuth: missing token",
-        "  error 401 from requireAuth: invalid token",
-        "  error 404 from orders.getById: order not found"
+        "  error 401 from requireAuth: missing token (when without a valid session)",
+        "  error 401 from requireAuth: invalid token (when without a valid session)",
+        "  error 404 from orders.getById: order not found (when no order matches)"
       ]
     },
     {
@@ -28,8 +28,8 @@
       "steps": [
         "subflow: Log in first: guarded by requireAuth -> api-da0be8b0",
         "api: Call DELETE /api/v1/orders/:orderId (handled by orders.cancel) | check 204",
-        "  error 401 from requireAuth: missing token",
-        "  error 401 from requireAuth: invalid token"
+        "  error 401 from requireAuth: missing token (when without a valid session)",
+        "  error 401 from requireAuth: invalid token (when without a valid session)"
       ]
     },
     {
@@ -38,8 +38,8 @@
       "steps": [
         "subflow: Log in first: guarded by requireAuth -> api-da0be8b0",
         "api: Call GET /api/v1/orders (handled by orders.list) | check 200 success data error timestamp",
-        "  error 401 from requireAuth: missing token",
-        "  error 401 from requireAuth: invalid token"
+        "  error 401 from requireAuth: missing token (when without a valid session)",
+        "  error 401 from requireAuth: invalid token (when without a valid session)"
       ]
     },
     {
@@ -49,9 +49,9 @@
         "subflow: Log in first: guarded by requireAuth -> api-da0be8b0",
         "api: Call POST /api/v1/orders (handled by orders.create) | check 201 success data error timestamp",
         "  body createOrderSchema { productId: number int, quantity: number int positive }",
-        "  error 401 from requireAuth: missing token",
-        "  error 401 from requireAuth: invalid token",
-        "  error 404 from orders.create: product not found"
+        "  error 401 from requireAuth: missing token (when without a valid session)",
+        "  error 401 from requireAuth: invalid token (when without a valid session)",
+        "  error 404 from orders.create: product not found (when no product matches)"
       ]
     },
     {
@@ -74,8 +74,8 @@
       "steps": [
         "api: Call POST /api/v1/users/register (handled by register) | check 201 success data error timestamp",
         "  body registerSchema { email: string email, password: string min(8) }",
-        "  error 400 from validate",
-        "  error 409 from register: email already registered"
+        "  error 400 from validate (when the body breaks registerSchema)",
+        "  error 409 from register: email already registered (when a user already matches)"
       ]
     },
     {
@@ -84,8 +84,8 @@
       "steps": [
         "api: Call POST /api/v1/users/login (handled by login) | check 200 success data error timestamp",
         "  body loginSchema { email: string email, password: string min(8) }",
-        "  error 400 from validate",
-        "  error 401 from login: wrong email or password"
+        "  error 400 from validate (when the body breaks loginSchema)",
+        "  error 401 from login: wrong email or password (when if (!user || user.password !== req.body.password))"
       ]
     },
     {
@@ -94,8 +94,8 @@
       "steps": [
         "subflow: Log in first: guarded by requireAuth -> api-da0be8b0",
         "api: Call GET /api/v1/users/me (handled by me) | check 200 success data error timestamp",
-        "  error 401 from requireAuth: missing token",
-        "  error 401 from requireAuth: invalid token"
+        "  error 401 from requireAuth: missing token (when without a valid session)",
+        "  error 401 from requireAuth: invalid token (when without a valid session)"
       ]
     },
     {
@@ -104,9 +104,9 @@
       "steps": [
         "subflow: Log in first: guarded by requireAuth -> api-da0be8b0",
         "api: Call GET /api/v1/users/:id (handled by getById) | check 200 success data error timestamp",
-        "  error 401 from requireAuth: missing token",
-        "  error 401 from requireAuth: invalid token",
-        "  error 404 from getById: user not found"
+        "  error 401 from requireAuth: missing token (when without a valid session)",
+        "  error 401 from requireAuth: invalid token (when without a valid session)",
+        "  error 404 from getById: user not found (when no user matches)"
       ]
     },
     {
@@ -116,9 +116,9 @@
         "subflow: Log in first: guarded by requireAuth -> api-da0be8b0",
         "api: Call PATCH /api/v1/users/:id (handled by update) | check 200 success data error timestamp",
         "  body updateUserSchema { email?: string email }",
-        "  error 401 from requireAuth: missing token",
-        "  error 401 from requireAuth: invalid token",
-        "  error 400 from validate"
+        "  error 401 from requireAuth: missing token (when without a valid session)",
+        "  error 401 from requireAuth: invalid token (when without a valid session)",
+        "  error 400 from validate (when the body breaks updateUserSchema)"
       ]
     },
     {

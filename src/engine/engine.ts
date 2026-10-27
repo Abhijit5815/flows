@@ -13,6 +13,7 @@ import { indexOf } from '../live/match.ts';
 import { NO_ROUTE } from '../model/tags.ts';
 import { loadGraph } from '../graph/store.ts';
 import { backendOf, linkCalls } from './backend.ts';
+import { enrich } from './enrich.ts';
 import { candidates } from './candidates.ts';
 import { classify } from './classify.ts';
 import { deciderText } from './describe.ts';
@@ -173,6 +174,8 @@ export async function buildFlows(graph: Graph, human: HumanInput, deps: EngineDe
     set.decisions[id] = classified.decisions;
     record(started, 'judge', id, judgement.status, judgement.reasons);
   }
+  // What a test needs to run each flow: path parameters with examples, and how the Log-in step's session is carried.
+  set.flows = enrich(set.flows, nodes, backend, live);
   return set;
 }
 

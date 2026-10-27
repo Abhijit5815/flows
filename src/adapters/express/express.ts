@@ -7,6 +7,7 @@ import { holderOf, importOf, inProject, isFunctionLike, keyOf, NO_ENV, qualified
 import type { ExtractContext, FrameworkAdapter, Unrecognised } from '../adapter.ts';
 import { decoratorControllers } from '../decorators.ts';
 import { joinPath } from '../paths.ts';
+import { carriesOf, conditionOf, tokenIn } from '../hints.ts';
 import { parsedSchemas, schemaNode } from '../schemas.ts';
 
 // The rules are data (rules.json); this file follows what they match: routers, mounts, routes, handlers,
@@ -16,6 +17,8 @@ const RULES = z
   .parse(JSON.parse(readFileSync(new URL('./rules.json', import.meta.url), 'utf8')));
 const GUARD_NAME = new RegExp(RULES.guards.name, 'i');
 const GUARD_BODY = new RegExp(RULES.guards.body);
+
+const BEARER = { header: 'Authorization', scheme: 'Bearer' };
 
 // Status constants by name, as status libraries spell them: httpStatus.NOT_FOUND, StatusCodes.UNAUTHORIZED.
 const STATUS_BY_NAME = new Map(Object.entries(STATUS_CODES).map(([code, text]) => [String(text).toUpperCase().replace(/[^A-Z0-9]+/g, '_').replace(/^_|_$/g, ''), Number(code)]));
@@ -238,7 +241,7 @@ function extract({ facts, files, read, resolver, graph, guards }: ExtractContext
     const inline = declaration === undefined ? libraryStatus(node) : undefined;
     if (inline !== undefined) {
       const name = node.getText().replace(/\s+/g, ' ');
-      const owner = graph.add(`library-guard:${name}`, { kind: 'guard', name, ...resolver.where(node), attrs: { name } });
+      const owner = graph.add(`library-guard:${name}`, { kind: 'guard', name, ...resolver.where(node), attrs: { name, carries: carriesOf(name) ?? BEARER } });
       graph.edge(route, owner, 'guarded-by');
       graph.edge(owner, graph.add(`${owner}#${inline}`, { kind: 'response', name: `${name}#${inline}`, ...resolver.where(node), attrs: { status: inline, fields: [] } }), 'responds-with');
       return;
@@ -255,7 +258,14 @@ function extract({ facts, files, read, resolver, graph, guards }: ExtractContext
     const args = guard && Node.isCallExpression(node) ? node.getArguments().map((arg) => resolver.string(arg, env)) : [];
     const fixed = args.length > 0 && args.every((arg) => arg !== undefined) ? (args as string[]) : [];
     const name = fixed.length === 0 ? base : `${base}(${fixed.map((arg) => `'${arg}'`).join(', ')})`;
-    const owner = graph.add(fixed.length === 0 ? keyOf(declaration) : `${keyOf(declaration)}(${fixed.join(',')})`, { kind: guard ? 'guard' : 'middleware', name, ...where, attrs: { name } });
+    // How a guard reads the session: from its code and the app's functions it uses (express-jwt's getToken); an auth
+    // library's guard that says nothing reads the Authorization header's Bearer token, as those libraries do by default.
+    const used = declaration.getDescendantsOfKind(SyntaxKind.Identifier).flatMap((id) => {
+      const definition = id.getDefinitionNodes()[0];
+      return definition !== undefined && definition !== declaration && inProject(definition) && !declaration.containsRange(definition.getPos(), definition.getEnd()) ? [definition.getText()] : [];
+    });
+    const carries = guard ? (carriesOf([declaration.getText(), ...used].join('\n')) ?? (fn !== undefined && libraryStatus(fn) !== undefined ? BEARER : undefined)) : undefined;
+    const owner = graph.add(fixed.length === 0 ? keyOf(declaration) : `${keyOf(declaration)}(${fixed.join(',')})`, { kind: guard ? 'guard' : 'middleware', name, ...where, attrs: { name, ...(carries === undefined ? {} : { carries }) } });
     graph.edge(route, owner, guard ? 'guarded-by' : 'uses');
     if (!responded.has(owner)) {
       responded.add(owner);
@@ -274,7 +284,11 @@ function extract({ facts, files, read, resolver, graph, guards }: ExtractContext
 
   // Responses a function sends: res.<send>(...) on a response parameter, or through a helper it hands res to.
   // messages: the string literals at the site (fail(res, 404, 'order not found')) or in the body sent.
-  type Sent = Map<number | undefined, { fields: string[]; messages: string[]; site: Node }>;
+  // when: the condition each message (or '' for none) is sent under; token: where a login's token is in the body.
+  type Sent = Map<number | undefined, { fields: string[]; messages: string[]; site: Node; when: Record<string, string>; token?: string }>;
+  const note = (when: Record<string, string>, messages: readonly string[], condition: string | undefined) => {
+    if (condition !== undefined) for (const message of messages.length > 0 ? messages : ['']) when[message] ??= condition;
+  };
   const literals = (nodes: readonly Node[]): string[] => nodes.flatMap((node) => (Node.isStringLiteral(node) || Node.isNoSubstitutionTemplateLiteral(node) ? [node.getLiteralValue()] : []));
   const collectResponses = (fn: Node, responses: ReadonlySet<string>, env: Env, depth: number, site: Node | undefined, sent: Sent): void => {
     for (const call of fn.getDescendantsOfKind(SyntaxKind.CallExpression)) {
@@ -298,12 +312,26 @@ function extract({ facts, files, read, resolver, graph, guards }: ExtractContext
         const fields = properties.flatMap((property) => (Node.hasName(property) ? [property.getName()] : []));
         // The text at the site: fail(res, 404, 'not found') through a helper, or res.status(404).json('Not found') itself.
         const messages = literals([...(Node.isCallExpression(here) ? here.getArguments() : []), ...properties.flatMap((property) => (Node.isPropertyAssignment(property) ? [property.getInitializerOrThrow()] : []))]);
-        const seen = sent.get(status);
-        if (seen === undefined) sent.set(status, { fields, messages, site: here });
+        // A login's token: in the body itself, or in what a helper puts under one of its properties (ok(res, { token })
+        // sent as { data } is "data.token").
+        const params = here !== call && Node.isCallExpression(here) && (Node.isArrowFunction(fn) || Node.isFunctionExpression(fn) || Node.isFunctionDeclaration(fn)) ? fn.getParameters() : [];
+        const token =
+          tokenIn(object, resolver) ??
+          properties.flatMap((property) => {
+            const value = Node.isPropertyAssignment(property) ? property.getInitializerOrThrow() : Node.isShorthandPropertyAssignment(property) ? property.getNameNode() : undefined;
+            const index = params.findIndex((parameter) => Node.isIdentifier(value) && parameter.getName() === value.getText());
+            const inner = index < 0 || !Node.isCallExpression(here) ? undefined : tokenIn(here.getArguments()[index], resolver);
+            return inner === undefined || !Node.hasName(property) ? [] : [`${property.getName()}.${inner}`];
+          })[0];
+        let entry = sent.get(status);
+        if (entry === undefined) sent.set(status, (entry = { fields, messages, site: here, when: {} }));
         else {
+          const seen = entry;
           seen.fields.push(...fields.filter((field) => !seen.fields.includes(field)));
           seen.messages.push(...messages.filter((message) => !seen.messages.includes(message)));
         }
+        entry.token ??= token;
+        note(entry.when, messages, conditionOf(here));
         continue;
       }
       if (depth >= 2) continue;
@@ -347,9 +375,13 @@ function extract({ facts, files, read, resolver, graph, guards }: ExtractContext
       const status = first === undefined ? undefined : statusOf(first);
       if (status === undefined || status < 400 || status > 599) continue;
       const messages = literals(rest);
-      const seen = sent.get(status);
-      if (seen === undefined) sent.set(status, { fields: [], messages, site: made });
-      else seen.messages.push(...messages.filter((message) => !seen.messages.includes(message)));
+      let entry = sent.get(status);
+      if (entry === undefined) sent.set(status, (entry = { fields: [], messages, site: made, when: {} }));
+      else {
+        const seen = entry;
+        seen.messages.push(...messages.filter((message) => !seen.messages.includes(message)));
+      }
+      note(entry.when, messages, conditionOf(made));
     }
     if (depth > 0) return;
     for (const call of fn.getDescendantsOfKind(SyntaxKind.CallExpression)) {
@@ -366,8 +398,9 @@ function extract({ facts, files, read, resolver, graph, guards }: ExtractContext
     const response = Node.isArrowFunction(fn) || Node.isFunctionExpression(fn) || Node.isFunctionDeclaration(fn) || Node.isMethodDeclaration(fn) ? fn.getParameters()[1] : undefined;
     if (response !== undefined) collectResponses(fn, new Set([keyOf(response)]), NO_ENV, 0, undefined, sent);
     if (response !== undefined) collectErrors(fn, 0, sent);
-    for (const [status, { fields, messages, site }] of sent) {
-      const node = graph.add(`${owner}#${status}`, { kind: 'response', name: `${name}#${status ?? 'unknown'}`, ...resolver.where(site), attrs: { status, fields, ...(messages.length > 0 ? { messages } : {}) } });
+    for (const [status, { fields, messages, site, when, token }] of sent) {
+      const extra = { ...(messages.length > 0 ? { messages } : {}), ...(Object.keys(when).length > 0 ? { when } : {}), ...(token === undefined ? {} : { token }) };
+      const node = graph.add(`${owner}#${status}`, { kind: 'response', name: `${name}#${status ?? 'unknown'}`, ...resolver.where(site), attrs: { status, fields, ...extra } });
       graph.edge(owner, node, 'responds-with');
     }
   };
@@ -395,7 +428,9 @@ function extract({ facts, files, read, resolver, graph, guards }: ExtractContext
     }
     const holder = holderOf(fn);
     const name = wrapper?.name ?? qualifiedName(holder) ?? inline;
-    const handler = graph.add(keyOf(holder), { kind: 'handler', name, ...resolver.where(holder), attrs: { name } });
+    // Path parameters it reads as numbers: Number(req.params.orderId), parseInt(req.params.id), +req.params.id.
+    const numeric = [...new Set(Array.from(fn.getText().matchAll(/(?:Number|parseInt|parseFloat)\(\s*req\.params\.(\w+)|\+\s*req\.params\.(\w+)/g), (match) => match[1] ?? match[2]))];
+    const handler = graph.add(keyOf(holder), { kind: 'handler', name, ...resolver.where(holder), attrs: { name, ...(numeric.length > 0 ? { numeric } : {}) } });
     graph.edge(route, handler, 'handled-by');
     if (!handled.has(handler)) {
       addResponses(handler, name, fn);

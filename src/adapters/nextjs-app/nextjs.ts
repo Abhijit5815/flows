@@ -5,6 +5,7 @@ import { PatternRuleSchema } from '../../ingest/match.ts';
 import { holderOf, importOf, inProject, isFunctionLike, keyOf, NO_ENV, qualifiedName, type Env } from '../../ingest/resolve.ts';
 import { HTTP_METHODS } from '../../model/flow.ts';
 import type { ExtractContext, FrameworkAdapter, Unrecognised } from '../adapter.ts';
+import { carriesOf } from '../hints.ts';
 
 // Next.js 14 App Router: pages and layouts come from the app/ folder's file conventions; components, forms,
 // actions and API calls are followed from each page with the resolver. The rules (rules.json) find every API call
@@ -60,7 +61,8 @@ export function middlewareGuard({ files, resolver, graph }: Pick<ExtractContext,
   if (file === undefined) return undefined;
   const source = resolver.file(file);
   const declaration = source.getFunction('middleware') ?? source.getVariableDeclaration('middleware') ?? source.getFunction('proxy') ?? source.getVariableDeclaration('proxy') ?? source.getDefaultExportSymbol()?.getDeclarations()[0];
-  const guard = graph.add(`guard:${file}`, { kind: 'guard', name: 'middleware', ...(declaration === undefined ? { file, line: 1 } : resolver.where(declaration)), attrs: { name: 'middleware' } });
+  const carries = carriesOf(source.getText());
+  const guard = graph.add(`guard:${file}`, { kind: 'guard', name: 'middleware', ...(declaration === undefined ? { file, line: 1 } : resolver.where(declaration)), attrs: { name: 'middleware', ...(carries === undefined ? {} : { carries }) } });
   const config = source.getVariableDeclaration('config')?.getInitializer();
   const options = config === undefined ? undefined : resolver.values(config).find((value) => Node.isObjectLiteralExpression(value));
   const matcher = Node.isObjectLiteralExpression(options) ? options.getProperty('matcher') : undefined;

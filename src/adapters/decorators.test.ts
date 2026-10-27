@@ -43,12 +43,12 @@ test('routing-controllers: routes under the route prefix, @Authorized, @OnUndefi
   });
   assert.equal(graph.framework, 'express');
   assert.deepEqual(routes, ['GET /api/users/:id', 'POST /api/users']);
-  assert.deepEqual(details('GET /api/users/:id'), ['api: 200', 'error 404 from UserController.one: User not found!']);
+  assert.deepEqual(details('GET /api/users/:id'), ['api: 200', 'error 404 from UserController.one: User not found! (when it returns nothing)']);
   assert.deepEqual(details('POST /api/users'), [
     'api: 200',
     'body CreateUserDto { email: string IsEmail(), password: string MinLength(8), name?: string }',
-    "error 401 from Authorized('admin')",
-    'error 400 from UserController.create: Nothing to create',
+    "error 401 from Authorized('admin') (when without a valid session)",
+    'error 400 from UserController.create: Nothing to create (when if (!body))',
   ]);
 });
 
@@ -64,8 +64,8 @@ test('NestJS: the global prefix, 201 for POST, @HttpCode, @UseGuards and HttpExc
   assert.equal(graph.framework, 'nestjs');
   assert.deepEqual(coverage.unrecognised, []);
   assert.deepEqual(routes, ['DELETE /api/users/:id', 'POST /api/users']);
-  assert.deepEqual(details('POST /api/users'), ['api: 201', 'body CreateUserDto { email: string IsEmail(), password: string MinLength(8), name?: string }', 'error 409 from UsersController.create: Email taken']);
-  assert.deepEqual(details('DELETE /api/users/:id'), ["api: 204", "error 401 from AuthGuard('jwt')", 'error 404 from UsersController.remove: No such user']);
+  assert.deepEqual(details('POST /api/users'), ['api: 201', 'body CreateUserDto { email: string IsEmail(), password: string MinLength(8), name?: string }', 'error 409 from UsersController.create: Email taken (when if (!dto.email))']);
+  assert.deepEqual(details('DELETE /api/users/:id'), ['api: 204', "error 401 from AuthGuard('jwt') (when without a valid session)", 'error 404 from UsersController.remove: No such user (when if (!id))']);
 });
 
 test("Express 5's path syntax reads as the rest of Flows writes paths", () => {

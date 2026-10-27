@@ -3,6 +3,7 @@ import { Node, SyntaxKind, type ClassDeclaration, type Decorator, type MethodDec
 import { importOf, keyOf, qualifiedName } from '../ingest/resolve.ts';
 import type { ExtractContext, Unrecognised } from './adapter.ts';
 import { joinPath } from './paths.ts';
+import { carriesOf, conditionOf, tokenIn } from './hints.ts';
 import { schemaNode } from './schemas.ts';
 
 // Decorator controllers, as routing-controllers and NestJS write them: a class names its route prefix, each method
@@ -19,7 +20,7 @@ const ERROR_STATUS = new Map([
 ]);
 const STATUS_BY_NAME = new Map(Object.entries(STATUS_CODES).map(([code, text]) => [String(text).toUpperCase().replace(/[^A-Z0-9]+/g, '_').replace(/^_|_$/g, ''), Number(code)]));
 
-type Sent = Map<number, { messages: string[]; site: Node }>;
+type Sent = Map<number, { messages: string[]; site: Node; when: Record<string, string> }>;
 
 export function decoratorControllers({ files, read, resolver, graph }: Pick<ExtractContext, 'files' | 'read' | 'resolver' | 'graph'>): Unrecognised[] {
   const notes: Unrecognised[] = [];
@@ -64,9 +65,14 @@ export function decoratorControllers({ files, read, resolver, graph }: Pick<Extr
     for (const made of fn.getDescendantsOfKind(SyntaxKind.NewExpression)) {
       const found = errorStatus(made.getExpression(), made);
       if (found === undefined || found.status < 400) continue;
-      const seen = sent.get(found.status);
-      if (seen === undefined) sent.set(found.status, { messages: found.messages, site: made });
-      else seen.messages.push(...found.messages.filter((message) => !seen.messages.includes(message)));
+      let entry = sent.get(found.status);
+      if (entry === undefined) sent.set(found.status, (entry = { messages: found.messages, site: made, when: {} }));
+      else {
+        const seen = entry;
+        seen.messages.push(...found.messages.filter((message) => !seen.messages.includes(message)));
+      }
+      const condition = conditionOf(made);
+      if (condition !== undefined) for (const message of found.messages.length > 0 ? found.messages : ['']) entry.when[message] ??= condition;
     }
     if (depth > 0) return;
     for (const call of fn.getDescendantsOfKind(SyntaxKind.CallExpression)) {
@@ -76,8 +82,12 @@ export function decoratorControllers({ files, read, resolver, graph }: Pick<Extr
       if (Node.isMethodDeclaration(target) || Node.isFunctionDeclaration(target)) collectErrors(target, depth + 1, sent);
     }
   };
-  const respond = (owner: string, name: string, status: number, site: Node, messages: string[] = []) =>
-    graph.edge(owner, graph.add(`${owner}#${status}`, { kind: 'response', name: `${name}#${status}`, ...resolver.where(site), attrs: { status, fields: [], ...(messages.length > 0 ? { messages } : {}) } }), 'responds-with');
+  const respond = (owner: string, name: string, status: number, site: Node, messages: string[] = [], extra: { when?: Record<string, string>; token?: string } = {}) =>
+    graph.edge(owner, graph.add(`${owner}#${status}`, { kind: 'response', name: `${name}#${status}`, ...resolver.where(site), attrs: { status, fields: [], ...(messages.length > 0 ? { messages } : {}), ...(extra.when !== undefined && Object.keys(extra.when).length > 0 ? { when: extra.when } : {}), ...(extra.token === undefined ? {} : { token: extra.token }) } }), 'responds-with');
+  // How the app's auth guards read the session: its passport strategy (ExtractJwt.fromAuthHeaderAsBearerToken()), found
+  // anywhere in its code; a guard that says nothing reads the Authorization header's Bearer token.
+  const strategy = sources.map((file) => read(file)).find((text) => /ExtractJwt|fromAuthHeader/.test(text));
+  const carries = (strategy === undefined ? undefined : carriesOf(strategy)) ?? { header: 'Authorization', scheme: 'Bearer' };
   // @Authorized('admin') (401 without a user), @UseGuards(AuthGuard('jwt')) (401) or @UseGuards(RolesGuard) (403).
   const guardsOf = (node: ClassDeclaration | MethodDeclaration): string[] =>
     node.getDecorators().flatMap((decorator) => {
@@ -85,15 +95,16 @@ export function decoratorControllers({ files, read, resolver, graph }: Pick<Extr
       if (kind === 'Authorized') {
         const roles = literals(args(decorator));
         const name = roles.length === 0 ? 'Authorized' : `Authorized(${roles.map((role) => `'${role}'`).join(', ')})`;
-        const guard = graph.add(`decorator-guard:${name}`, { kind: 'guard', name, ...resolver.where(decorator), attrs: { name } });
+        const guard = graph.add(`decorator-guard:${name}`, { kind: 'guard', name, ...resolver.where(decorator), attrs: { name, carries } });
         respond(guard, name, 401, decorator);
         return [guard];
       }
       if (kind !== 'UseGuards') return [];
       return args(decorator).map((arg) => {
         const name = arg.getText().replace(/\s+/g, ' ');
-        const guard = graph.add(`decorator-guard:${name}`, { kind: 'guard', name, ...resolver.where(decorator), attrs: { name } });
-        respond(guard, name, /AuthGuard|Jwt|Auth\b/i.test(name) ? 401 : 403, decorator);
+        const auth = /AuthGuard|Jwt|Auth\b/i.test(name);
+        const guard = graph.add(`decorator-guard:${name}`, { kind: 'guard', name, ...resolver.where(decorator), attrs: { name, ...(auth ? { carries } : {}) } });
+        respond(guard, name, auth ? 401 : 403, decorator);
         return guard;
       });
     });
@@ -128,20 +139,29 @@ export function decoratorControllers({ files, read, resolver, graph }: Pick<Extr
         const name = `${verb} ${path}`;
         const route = graph.add(`route:${name}`, { kind: 'route', name, ...resolver.where(verbDecorator), attrs: { method: verb, path } });
         const handlerName = qualifiedName(method) ?? `${cls.getName() ?? 'Controller'}.${method.getName()}`;
-        const handler = graph.add(keyOf(method), { kind: 'handler', name: handlerName, ...resolver.where(method), attrs: { name: handlerName } });
+        // Path parameters it reads as numbers: @Param('id', ParseIntPipe), or @Param('id') id: number.
+        const numeric = method.getParameters().flatMap((parameter) => {
+          const param = parameter.getDecorators().find((decorator) => nameOf(decorator) === 'Param');
+          const key = param === undefined ? undefined : literals(args(param))[0];
+          return key !== undefined && (/ParseIntPipe|ParseFloatPipe/.test(param?.getText() ?? '') || parameter.getTypeNode()?.getText() === 'number') ? [key] : [];
+        });
+        const handler = graph.add(keyOf(method), { kind: 'handler', name: handlerName, ...resolver.where(method), attrs: { name: handlerName, ...(numeric.length > 0 ? { numeric } : {}) } });
         graph.edge(route, handler, 'handled-by');
         for (const guard of [...classGuards, ...guardsOf(method)]) graph.edge(route, guard, 'guarded-by');
         // Success: @HttpCode(n), else 201 for a NestJS POST and 200 otherwise.
-        respond(handler, handlerName, statusOf(args(find(method, 'HttpCode'))[0]) ?? (nest && verb === 'POST' ? 201 : 200), method);
+        // A login's token: in what the method returns ({ user: { token } } is "user.token").
+        const returned = method.getDescendantsOfKind(SyntaxKind.ReturnStatement).map((statement) => statement.getExpression()).find((value) => value !== undefined && tokenIn(value, resolver) !== undefined);
+        const token = returned === undefined ? undefined : tokenIn(returned, resolver);
+        respond(handler, handlerName, statusOf(args(find(method, 'HttpCode'))[0]) ?? (nest && verb === 'POST' ? 201 : 200), method, [], token === undefined ? {} : { token });
         const sent: Sent = new Map();
         collectErrors(method, 0, sent);
         // @OnUndefined(UserNotFoundError) / @OnNull(404): what it answers when the method returns nothing.
         for (const decorator of [find(method, 'OnUndefined'), find(method, 'OnNull')]) {
           const [arg] = args(decorator);
           const found = arg === undefined ? undefined : statusOf(arg) !== undefined ? { status: statusOf(arg) as number, messages: [] } : errorStatus(arg);
-          if (found !== undefined && found.status >= 400 && decorator !== undefined) sent.set(found.status, { messages: found.messages, site: decorator });
+          if (found !== undefined && found.status >= 400 && decorator !== undefined) sent.set(found.status, { messages: found.messages, site: decorator, when: Object.fromEntries((found.messages.length > 0 ? found.messages : ['']).map((message) => [message, 'it returns nothing'])) });
         }
-        for (const [status, { messages, site }] of sent) respond(handler, handlerName, status, site, messages);
+        for (const [status, { messages, site, when }] of sent) respond(handler, handlerName, status, site, messages, { when });
         // The body: the class of the parameter marked @Body().
         for (const parameter of method.getParameters()) {
           if (!parameter.getDecorators().some((decorator) => nameOf(decorator) === 'Body')) continue;

@@ -4,9 +4,9 @@ import { GROUNDING, GROUNDING_LABELS, groundingInput } from '../decider/entailme
 import type { Lookup } from '../graph/lookup.ts';
 import type { Graph, GraphNode } from '../graph/schema.ts';
 import { FlowSchema, type Flow } from '../model/flow.ts';
-import { claimOf, flowName, isRunClaim, label, LOGIN_CLAIM, premiseOf } from './describe.ts';
+import { actionOf, claimOf, flowName, isRunClaim, label, LOGIN_CLAIM, premiseOf } from './describe.ts';
 import { routeFor, type Backend } from './backend.ts';
-import { errorSource, flowId } from './candidates.ts';
+import { errorSource, errorWhen, flowId } from './candidates.ts';
 import { isLogin } from './subflows.ts';
 
 type Step = Flow['steps'][number];
@@ -100,7 +100,9 @@ function errorProblem(error: NonNullable<Step['errors']>[number], cited: GraphNo
   if (owner === undefined) return `${error.by} is not a guard, middleware or handler of this route`;
   if (response?.kind !== 'response') return `it cites no response of ${error.by}`;
   if (response.attrs.status !== error.status) return `${response.id} sends ${response.attrs.status ?? 'an unknown status'}, not ${error.status}`;
-  return error.message === undefined || response.attrs.messages?.includes(error.message) ? undefined : `${response.id} doesn't send "${error.message}"`;
+  if (error.message !== undefined && !response.attrs.messages?.includes(error.message)) return `${response.id} doesn't send "${error.message}"`;
+  const when = route === undefined || owner === undefined ? undefined : errorWhen(owner, response, error.message, route, ctx.nodes);
+  return error.when === undefined || error.when === when ? undefined : `${response.id} is not sent "${error.when}"`;
 }
 
 // Why a step's request body is not the schema its route validates, or undefined when it is.
@@ -185,13 +187,17 @@ async function verifyOne(input: unknown, ctx: VerifyContext): Promise<Verificati
     const body = step.request?.body;
     const bodyIssue = body === undefined ? undefined : bodyProblem(body, where, here);
     if (bodyIssue !== undefined) say('request body', bodyIssue);
-    const { errors: _, answered_by: link, ...rest } = step;
+    // A UI step's action is rebuilt from the form or click it cites; one that differs is not what source does.
+    const actionIssue = step.action === undefined || JSON.stringify(actionOf(nodes)) === JSON.stringify(step.action) ? undefined : 'it is not what the cited form or click does';
+    if (actionIssue !== undefined) say('action', actionIssue);
+    const { errors: _, answered_by: link, action, ...rest } = step;
     steps.push({
       ...rest,
       ...(rest.request === undefined || bodyIssue === undefined || keep ? {} : { request: { method: rest.request.method, path: rest.request.path } }),
       check: checkIssue === undefined || keep ? step.check : null,
       ...(errors.length > 0 ? { errors } : {}),
       ...(link !== undefined && (answered.problem === undefined || keep) ? { answered_by: link } : {}),
+      ...(action !== undefined && (actionIssue === undefined || keep) ? { action } : {}),
     });
   }
   // A person may build a flow from subflows alone; anything else needs a step of its own left.

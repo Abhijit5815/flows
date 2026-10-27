@@ -90,7 +90,10 @@ const USAGE = `usage: flows <command> [--project <dir>]
   cost [--last <n>]                        LLM calls, tokens and cost of each run (a cost only with
                                            llm.price_per_mtok in the config; local models and the assistant cost 0)`;
 
-const { values, positionals } = parseArgs({
+// A wrong option is the user's mistake: one line and the way to the help, not Node's stack.
+const parsed = (() => {
+  try {
+    return parseArgs({
   allowPositionals: true,
   options: {
     project: { type: 'string', default: '.' },
@@ -113,6 +116,14 @@ const { values, positionals } = parseArgs({
     flow: { type: 'string' },
   },
 });
+  } catch (error) {
+    const option = error instanceof Error ? /Unknown option '([^']+)'/.exec(error.message)?.[1] : undefined;
+    if (!(error instanceof Error) || !String((error as { code?: unknown }).code).startsWith('ERR_PARSE_ARGS')) throw error;
+    console.error(`flows: ${option === undefined ? error.message.split('. ')[0] : `unknown option ${option}`}; see "flows help"`);
+    process.exit(1);
+  }
+})();
+const { values, positionals } = parsed;
 
 const root = resolve(values.project);
 
@@ -191,6 +202,12 @@ function flowSummary(set: FlowSet): string {
   const held = set.flows.filter((flow) => flow.destructive !== 'no' && !flow.enabled && flow.status !== 'rejected').length;
   const statuses = [...(set.runs.length > 0 ? ['confirmed', 'observed-only'] : []), 'verified', 'unverified', 'unreachable', 'rejected'];
   return `  flows: ${set.flows.length} (${statuses.map((status) => `${count(status)} ${status}`).join(', ')}), ${set.rejected.length} candidates rejected, ${held} held for review (destructive or unsure); see "flows show flows"`;
+}
+
+// Commands that work on the repos say so when there are none, rather than doing nothing.
+function withRepos(project: Project): Project {
+  if (project.config.repos.length === 0) throw new FlowsError('no repos registered yet; run "flows repo add <path> --role web|api" first');
+  return project;
 }
 
 async function scanAll(project: Project): Promise<void> {
@@ -413,11 +430,15 @@ async function exploreLive(project: Project, url: string): Promise<void> {
   if (engine.llm.pending > 0) console.log(`${engine.llm.pending} AI job(s) wait for your coding assistant: run "flows jobs", answer them, then explore or scan again`);
 }
 
+// What a graph holds, by node kind (show routes, show pages, ...).
+const NODE_KINDS = ['route', 'handler', 'guard', 'middleware', 'request-schema', 'response', 'model', 'page', 'layout', 'component', 'form', 'action', 'api-call'];
+
 function show(project: Project, what: string): void {
   if (what === 'crosscheck') return showCrossCheck(project);
   if (what === 'missed') return showMissed(project);
   if (what === 'flows' || what === 'rejected' || what === 'unreachable') return showFlows(project, what);
   const kind = what.replace(/s$/, '');
+  if (!NODE_KINDS.includes(kind)) throw new FlowsError(`there is no "${what}" to show; one of: flows, rejected, unreachable, missed, crosscheck, ${NODE_KINDS.map((each) => (each.endsWith('ware') ? each : `${each}s`)).join(', ')}`);
   for (const repo of project.config.repos) {
     const graph = loadGraph(project, repo);
     if (graph === undefined) {
@@ -582,22 +603,26 @@ async function run(): Promise<void> {
       return showStacks(setFramework(project, repo, framework), [{ ...repo, framework }]);
     }
     case 'scan':
-      return await scanAll(loadProject(root));
+      return await scanAll(withRepos(loadProject(root)));
     case 'eval':
       return await evalAll();
     case 'show':
       if (!sub) throw new FlowsError('usage: flows show <kind> [--json], e.g. flows show routes');
-      return show(loadProject(root), sub);
+      return show(withRepos(loadProject(root)), sub);
     case 'review':
       return review(loadProject(root), sub, rest[0]);
     case 'export': {
-      const project = loadProject(root);
+      const project = withRepos(loadProject(root));
       const sets = project.config.repos.map((repo) => loadFlows(project, repo));
       if (sets.some((set) => set === undefined)) throw new FlowsError('some repos have no flows yet; run "flows scan"');
       const exported = exportFlows(sets.flatMap((set) => set ?? []), categories(project.config));
       if (values.out === undefined) console.log(JSON.stringify(exported, null, 2));
       else {
-        writeJsonAtomic(resolve(values.out), exported, 2);
+        try {
+          writeJsonAtomic(resolve(values.out), exported, 2);
+        } catch (error) {
+          throw new FlowsError(`could not write ${resolve(values.out)}: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
+        }
         console.log(`${exported.flows.length} flows written to ${resolve(values.out)}`);
       }
       return;

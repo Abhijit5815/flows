@@ -145,6 +145,8 @@ const repoPath = (project: Project, path: string): string => relative(project.ro
 export function addRepo(project: Project, path: string, role: string): Project {
   const absolute = resolve(project.root, path);
   if (!existsSync(absolute) || !statSync(absolute).isDirectory()) throw new ConfigError(`${path} is not a directory`);
+  if (!RoleSchema.safeParse(role).success) throw new ConfigError(`the role must be web or api, not "${role}"`);
+  if (project.config.repos.some((repo) => repo.path === repoPath(project, path) && repo.role === role)) throw new ConfigError(`${path} is already registered as ${role}`);
   const updated = validate(project.root, { ...project.raw, repos: [...project.config.repos, { path: repoPath(project, path), role }] });
   write(updated);
   return updated;

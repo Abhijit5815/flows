@@ -68,8 +68,9 @@ test('repos are stored relative to the project root, one per path and role', () 
     { path: 'apps/api', role: 'web' },
   ]);
 
-  assert.throws(() => addRepo(project, './apps/api', 'api'), isConfigError(/already registered as api/));
-  assert.throws(() => addRepo(project, 'apps/web', 'mobile'), isConfigError(/role/));
+  // The input is what's wrong, so the message says so, not that the config file is invalid.
+  assert.throws(() => addRepo(project, './apps/api', 'api'), isConfigError(/^\.\/apps\/api is already registered as api$/));
+  assert.throws(() => addRepo(project, 'apps/web', 'mobile'), isConfigError(/^the role must be web or api, not "mobile"$/));
   assert.throws(() => addRepo(project, 'apps/missing', 'web'), isConfigError(/not a directory/));
 });
 

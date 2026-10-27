@@ -65,6 +65,9 @@ export const uiStep = (cited: GraphNode[]): DraftStep => {
   };
 };
 
+// Who sends an error, by name; a handler written inline is named after its route, so it is "the handler".
+export const errorSource = (owner: GraphNode, route: GraphNode): string => (owner.kind === 'handler' && label(owner) === label(route) ? 'the handler' : label(owner));
+
 // What a route answers besides success: its guards' and middleware's error responses, then its handler's; one error
 // per message, so "missing token" and "invalid token" are two cases.
 export function routeErrors(route: GraphNode, nodes: Lookup): NonNullable<Step['errors']> {
@@ -72,7 +75,7 @@ export function routeErrors(route: GraphNode, nodes: Lookup): NonNullable<Step['
   return owners.flatMap((owner) =>
     nodes.out(owner.id, 'responds-with').flatMap((response) => {
       if (response.kind !== 'response' || response.attrs.status === undefined || response.attrs.status < 400) return [];
-      const error = { kind: 'api' as const, status: response.attrs.status, by: label(owner), evidence: [evidenceOf(response)] };
+      const error = { kind: 'api' as const, status: response.attrs.status, by: errorSource(owner, route), evidence: [evidenceOf(response)] };
       return response.attrs.messages === undefined ? [error] : response.attrs.messages.map((message) => ({ ...error, message }));
     }),
   );
@@ -127,6 +130,10 @@ function apiCandidates(graph: Graph, nodes: Lookup): Candidates {
   const found: Candidates = { flows: [], skipped: [], notes: {} };
   for (const route of graph.nodes) {
     if (route.kind !== 'route') continue;
+    if (route.attrs.method === 'OPTIONS') {
+      found.skipped.push({ node: route.id, name: label(route), reason: 'an OPTIONS route answers CORS preflight requests from browsers; no user does it' });
+      continue;
+    }
     const step = routeStep(route, nodes);
     if (typeof step === 'string') found.skipped.push({ node: route.id, name: label(route), reason: step });
     else found.flows.push(draft('api', route.id, [step], nodes));
@@ -190,7 +197,9 @@ function webCandidates(graph: Graph, nodes: Lookup): Candidates {
         if (built.has(action.id)) continue;
         built.add(action.id);
         const calls = nodes.out(action.id, 'calls');
-        if (calls.length === 0 && !(action.kind === 'action' && action.attrs.server)) {
+        // A click that calls nothing and runs no server action does nothing source can see, unless a library call it
+        // makes reaches the server itself (next-auth's signOut).
+        if (calls.length === 0 && !(action.kind === 'action' && (action.attrs.server || action.attrs.library !== undefined))) {
           const flow = draft('ui', action.id, [open(page), ui([action, owner])], nodes);
           found.skipped.push({ node: action.id, name: flow.name, reason: "it makes no API call and runs no server action, so source doesn't show what it does", flow });
           continue;

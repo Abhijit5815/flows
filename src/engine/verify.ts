@@ -6,7 +6,7 @@ import type { Graph, GraphNode } from '../graph/schema.ts';
 import { FlowSchema, type Flow } from '../model/flow.ts';
 import { claimOf, flowName, isRunClaim, label, LOGIN_CLAIM, premiseOf } from './describe.ts';
 import { routeFor, type Backend } from './backend.ts';
-import { flowId } from './candidates.ts';
+import { errorSource, flowId } from './candidates.ts';
 import { isLogin } from './subflows.ts';
 
 type Step = Flow['steps'][number];
@@ -95,7 +95,7 @@ function errorProblem(error: NonNullable<Step['errors']>[number], cited: GraphNo
   }
   const route = cited.find((node) => node.kind === 'route');
   const owners = route === undefined ? [] : (['guarded-by', 'uses', 'handled-by'] as const).flatMap((kind) => ctx.nodes.out(route.id, kind));
-  const owner = owners.find((own) => label(own) === error.by);
+  const owner = route === undefined ? undefined : owners.find((own) => errorSource(own, route) === error.by);
   const response = nodes.find((node) => node.kind === 'response' && owner !== undefined && ctx.nodes.out(owner.id, 'responds-with').some((own) => own.id === node.id));
   if (owner === undefined) return `${error.by} is not a guard, middleware or handler of this route`;
   if (response?.kind !== 'response') return `it cites no response of ${error.by}`;

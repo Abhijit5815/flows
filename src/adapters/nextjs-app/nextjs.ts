@@ -15,6 +15,9 @@ const ROUTE_FILE = /^(page|layout|route)\.(tsx|ts|jsx|js)$/;
 const FORM_STATE_HOOKS = new Set(['useFormState', 'useActionState']);
 const AXIOS_METHODS = new Set(['get', 'post', 'put', 'patch', 'delete', 'head', 'options']);
 const MAX_CALL_DEPTH = 3;
+const AUTH_CALL = /^(signIn|signOut|signUp|logIn|logOut|login|logout)$/;
+// A button's working or done state, not what it does: "Saving...", "Loading…", "Copied", "Saved!".
+const STATE_LABEL = /(\.\.\.|…)$|^(copied|saved|sent|added|removed|deleted|updated|submitted|subscribed|followed|liked|joined|done)!?$/i;
 
 const isGroup = (segment: string) => /^\(.+\)$/.test(segment) && !/^\(\.{1,3}\)/.test(segment);
 const isParallelOrIntercepting = (segment: string) => segment.startsWith('@') || /^\(\.{1,3}\)/.test(segment);
@@ -187,16 +190,34 @@ function extract({ files, facts, resolver, graph }: ExtractContext): Unrecognise
       const own = statement.getFirstAncestor((ancestor) => isFunctionLike(ancestor)) === fn;
       return own && (Node.isStringLiteral(value) || Node.isNoSubstitutionTemplateLiteral(value)) ? [value.getLiteralValue()] : [];
     });
-    return { ...(redirects.length > 0 ? { redirects: [...new Set(redirects)] } : {}), ...(messages.length > 0 ? { messages: [...new Set(messages)] } : {}) };
+    // An auth library's sign-in or sign-out reaches the server inside the library (next-auth's signOut(), better-auth's
+    // authClient.signIn.social(...), supabase.auth.signOut()): named by the call, when it isn't the app's own function.
+    const library = fn.getDescendantsOfKind(SyntaxKind.CallExpression).flatMap((call) => {
+      const callee = call.getExpression();
+      const names: string[] = [];
+      let link: Node = callee;
+      while (Node.isPropertyAccessExpression(link)) {
+        names.push(link.getName());
+        link = link.getExpression();
+      }
+      if (Node.isIdentifier(link)) names.push(link.getText());
+      return names.some((name) => AUTH_CALL.test(name)) && calledFunction(callee) === undefined ? [callee.getText()] : [];
+    })[0];
+    return {
+      ...(redirects.length > 0 ? { redirects: [...new Set(redirects)] } : {}),
+      ...(messages.length > 0 ? { messages: [...new Set(messages)] } : {}),
+      ...(library === undefined ? {} : { library }),
+    };
   };
 
   // An inline handler has no name of its own, so it is named after its component: "Header#action", "GamePage#onClick2".
-  const addAction = (fn: Node, inlineName: () => string): string => {
+  // text: what the element that runs it says ("Add to cart"), from the first place it is found.
+  const addAction = (fn: Node, inlineName: () => string, text?: string): string => {
     const holder = holderOf(fn);
     const key = keyOf(holder);
     if (graph.get(key) !== undefined) return key;
     const name = qualifiedName(holder) ?? inlineName();
-    graph.add(key, { kind: 'action', name, ...resolver.where(holder), attrs: { name, server: isServerAction(fn), ...outcomesOf(fn) } });
+    graph.add(key, { kind: 'action', name, ...resolver.where(holder), attrs: { name, server: isServerAction(fn), ...outcomesOf(fn), ...(text === undefined ? {} : { text }) } });
     for (const call of new Set(apiCallsIn(fn, NO_ENV, 0, new Set()))) graph.edge(key, call, 'calls');
     return key;
   };
@@ -212,6 +233,57 @@ function extract({ files, facts, resolver, graph }: ExtractContext): Unrecognise
   const tagOf = (element: Node) => (Node.isJsxOpeningElement(element) || Node.isJsxSelfClosingElement(element) ? element.getTagNameNode() : element);
   const componentsOf = (element: Node): Node[] =>
     /^[a-z]/.test(tagOf(element).getText()) ? [] : resolver.values(tagOf(element)).filter((value) => (isFunctionLike(value) || Node.isClassDeclaration(value)) && inProject(value));
+
+  // What an element says to the user: its text (<button>Sign in</button>, or the idle branch of {pending ? 'Saving...' :
+  // 'Save'}), an input's value, then its aria-label or title (an icon button), then the text of the button a component
+  // like <SubmitButton /> renders. Only fixed text: a label built at run time says nothing here.
+  const textOf = (element: Node, depth = 0): string | undefined => {
+    const fixed = (name: string) => {
+      const value = attribute(element, name);
+      return value === undefined ? undefined : resolver.string(value);
+    };
+    const body = Node.isJsxOpeningElement(element) ? element.getParent() : undefined;
+    // Shown text only: not a class name in an attribute, not 'signin' in mode === 'signin', and of {a ? 'X' : 'Y'} the
+    // first branch (the second when the first is a "Saving..." label).
+    const literal = (node: Node): string[] => {
+      if (Node.isJsxText(node)) return [node.getText()];
+      if (!(Node.isStringLiteral(node) || Node.isNoSubstitutionTemplateLiteral(node))) return [];
+      if (node.getFirstAncestor((ancestor) => Node.isJsxAttribute(ancestor)) !== undefined || node.getFirstAncestor((ancestor) => Node.isJsxExpression(ancestor)) === undefined) return [];
+      let branch: Node = node;
+      let parent = node.getParent();
+      while (Node.isParenthesizedExpression(parent)) [branch, parent] = [parent, parent.getParent()];
+      if (Node.isBinaryExpression(parent) || Node.isCallExpression(parent)) return [];
+      if (Node.isConditionalExpression(parent) && parent.getWhenFalse() === branch) {
+        let first = parent.getWhenTrue();
+        while (Node.isParenthesizedExpression(first)) first = first.getExpression();
+        if ((Node.isStringLiteral(first) || Node.isNoSubstitutionTemplateLiteral(first)) && !STATE_LABEL.test(first.getLiteralValue())) return [];
+      }
+      return [node.getLiteralValue()];
+    };
+    // "Saving..." is what a button says while it works, not what it does.
+    // "Saving..." or "Copied" is what a button says while it works or once it has, not what it does.
+    const parts = (Node.isJsxElement(body) ? body.getDescendants().flatMap(literal) : [fixed('value') ?? '']).map((part) => part.trim()).filter((part) => part !== '' && !STATE_LABEL.test(part));
+    const own = parts.join(' ').replace(/\s+/g, ' ').trim();
+    const component = depth === 0 && own === '' ? componentsOf(element)[0] : undefined;
+    const text = own || fixed('aria-label') || fixed('title') || (component === undefined ? undefined : submitText(component, depth + 1));
+    return text !== undefined && text.length > 0 && text.length <= 60 ? text : undefined;
+  };
+
+  // The text of a form's submit button: a <button> that isn't type="button" or "reset", an <input type="submit">, or a
+  // component whose name says button (<SubmitButton>Sign in</SubmitButton>).
+  const submitText = (body: Node, depth = 0): string | undefined =>
+    jsxElements(body)
+      .filter((element) => {
+        const tag = tagOf(element).getText();
+        const type = attribute(element, 'type');
+        const kind = type === undefined ? undefined : resolver.string(type);
+        // A button marked disabled outright is a state ("Out Of Stock"), not what the form does.
+        const disabled = Node.isJsxOpeningElement(element) || Node.isJsxSelfClosingElement(element) ? element.getAttribute('disabled') : undefined;
+        if (Node.isJsxAttribute(disabled) && (disabled.getInitializer() === undefined || disabled.getInitializer()?.getText() === '{true}')) return false;
+        return (tag === 'button' && kind !== 'button' && kind !== 'reset') || (tag === 'input' && kind === 'submit') || (/^[A-Z]/.test(tag) && /button/i.test(tag));
+      })
+      .map((element) => textOf(element, depth))
+      .find((text) => text !== undefined);
 
   // A form's field names, including inputs of components rendered inside it (<Login /> inside an auth form).
   const fieldsIn = (root: Node, seen: Set<Node>): string[] =>
@@ -235,7 +307,7 @@ function extract({ files, facts, resolver, graph }: ExtractContext): Unrecognise
 
   // A form component that takes what it runs as a prop (<Form action={register}>): a form of its own on each page that
   // uses it, with the action that page passes, so two pages sharing it are two flows.
-  const propForms = new Map<Node, { props: string[]; fields: string[] }[]>();
+  const propForms = new Map<Node, { props: string[]; fields: string[]; submit?: string }[]>();
 
   // Walks one page, layout or component: what it renders, its forms and click actions, and what it fetches.
   const visited = new Set<string>();
@@ -253,7 +325,7 @@ function extract({ files, facts, resolver, graph }: ExtractContext): Unrecognise
       const onClick = attribute(element, 'onClick');
       for (const target of onClick === undefined ? [] : actionTargets(onClick)) {
         handlers.add(target);
-        graph.edge(key, addAction(target, inline('onClick')), 'triggers');
+        graph.edge(key, addAction(target, inline('onClick'), textOf(element)), 'triggers');
       }
       if (tag === 'form' && Node.isJsxOpeningElement(element)) {
         const body = element.getParentOrThrow();
@@ -263,27 +335,28 @@ function extract({ files, facts, resolver, graph }: ExtractContext): Unrecognise
           const prop = value === undefined ? undefined : propOf(value, fn);
           return prop === undefined ? [] : [prop];
         });
+        const submit = submitText(body);
         if (props.length > 0) {
-          propForms.set(fn, [...(propForms.get(fn) ?? []), { props, fields }]);
+          propForms.set(fn, [...(propForms.get(fn) ?? []), { props, fields, ...(submit === undefined ? {} : { submit }) }]);
           continue;
         }
         forms += 1;
         const name = `${owner}#form${forms > 1 ? forms : ''}`;
-        const form = graph.add(keyOf(element), { kind: 'form', name, ...resolver.where(element), attrs: { fields } });
+        const form = graph.add(keyOf(element), { kind: 'form', name, ...resolver.where(element), attrs: { fields, ...(submit === undefined ? {} : { submit }) } });
         graph.edge(key, form, 'contains');
         const targets = [
           ...['action', 'onSubmit'].flatMap((name) => {
             const value = attribute(element, name);
-            return value === undefined ? [] : actionTargets(value).map((target) => ({ target, name }));
+            return value === undefined ? [] : actionTargets(value).map((target) => ({ target, name, text: undefined as string | undefined }));
           }),
           ...jsxElements(body).flatMap((inner) => {
             const value = attribute(inner, 'formAction');
-            return value === undefined ? [] : actionTargets(value).map((target) => ({ target, name: 'formAction' }));
+            return value === undefined ? [] : actionTargets(value).map((target) => ({ target, name: 'formAction', text: textOf(inner) }));
           }),
         ];
-        for (const { target, name: via } of targets) {
+        for (const { target, name: via, text } of targets) {
           handlers.add(target);
-          graph.edge(form, addAction(target, inline(via)), 'submits');
+          graph.edge(form, addAction(target, inline(via), text), 'submits');
         }
         continue;
       }
@@ -306,7 +379,8 @@ function extract({ files, facts, resolver, graph }: ExtractContext): Unrecognise
           forms += 1;
           const body = Node.isJsxOpeningElement(element) ? element.getParentOrThrow() : element;
           const fields = [...new Set([...shared.fields, ...fieldsIn(body, new Set())])];
-          const form = graph.add(`${keyOf(element)}#form`, { kind: 'form', name: `${owner}#form${forms > 1 ? forms : ''}`, ...resolver.where(element), attrs: { fields } });
+          const submit = submitText(body) ?? shared.submit;
+          const form = graph.add(`${keyOf(element)}#form`, { kind: 'form', name: `${owner}#form${forms > 1 ? forms : ''}`, ...resolver.where(element), attrs: { fields, ...(submit === undefined ? {} : { submit }) } });
           graph.edge(key, form, 'contains');
           for (const { target, via } of targets) {
             handlers.add(target);

@@ -2,14 +2,14 @@
   "flows": [
     {
       "id": "ui-e68b64da",
-      "name": "Open /",
+      "name": "User can view the home page",
       "steps": [
         "ui: Open / | check /"
       ]
     },
     {
       "id": "ui-3cb127a8",
-      "name": "Open /cart",
+      "name": "User can view the cart page",
       "steps": [
         "subflow: Log in first: guarded by middleware -> ui-082b51bb",
         "ui: Open /cart | check /cart",
@@ -18,14 +18,14 @@
     },
     {
       "id": "ui-9076652b",
-      "name": "Open /login",
+      "name": "User can view the login page",
       "steps": [
         "ui: Open /login | check /login"
       ]
     },
     {
       "id": "ui-395e207b",
-      "name": "Open /account",
+      "name": "User can view the account page",
       "steps": [
         "subflow: Log in first: guarded by middleware -> ui-082b51bb",
         "ui: Open /account | check /account"
@@ -33,7 +33,7 @@
     },
     {
       "id": "ui-e45ebcf5",
-      "name": "Open /products",
+      "name": "User can view the products page",
       "steps": [
         "ui: Open /products | check /products",
         "api: Calls GET /api/products"
@@ -41,7 +41,7 @@
     },
     {
       "id": "ui-fca5e371",
-      "name": "Open /products/[id]",
+      "name": "User can view product details",
       "steps": [
         "ui: Open /products/[id] | check /products/[id]",
         "api: Calls GET /api/products/:id"
@@ -49,7 +49,7 @@
     },
     {
       "id": "ui-d7dea207",
-      "name": "Open /account/orders",
+      "name": "User can view the account orders page",
       "steps": [
         "subflow: Log in first: guarded by middleware -> ui-082b51bb",
         "ui: Open /account/orders | check /account/orders",
@@ -58,26 +58,26 @@
     },
     {
       "id": "ui-19a7cdd3",
-      "name": "Open /docs/[...slug]",
+      "name": "User can view the docs pages",
       "steps": [
         "ui: Open /docs/[...slug] | check /docs/[...slug]"
       ]
     },
     {
       "id": "ui-39c6a554",
-      "name": "Submit Header#form on / (POST /api/auth/logout)",
+      "name": "User can sign out",
       "steps": [
         "ui: Open / | check /",
-        "ui: Fill in and submit Header#form, which runs Header#action",
+        "ui: Press Sign out",
         "api: Calls POST /api/auth/logout"
       ]
     },
     {
       "id": "ui-082b51bb",
-      "name": "Submit LoginForm#form on /login (POST /api/auth/login)",
+      "name": "User can sign in",
       "steps": [
         "ui: Open /login | check /login",
-        "ui: Fill in and submit LoginForm#form (email, password), which runs login | check /account",
+        "ui: Fill in email and password, then press Sign in | check /account",
         "  error: Enter a valid email and password.",
         "  error: Wrong email or password.",
         "api: Calls POST /api/auth/login"
@@ -85,30 +85,30 @@
     },
     {
       "id": "ui-1a8fadd2",
-      "name": "Submit ProfileForm#form on /account (PATCH /api/me)",
+      "name": "User can save profile",
       "steps": [
         "subflow: Log in first: guarded by middleware -> ui-082b51bb",
         "ui: Open /account | check /account",
-        "ui: Fill in and submit ProfileForm#form (name, email, street, city), which runs handleSubmit",
+        "ui: Fill in name, email, street and city, then press Save",
         "api: Calls PATCH /api/me"
       ]
     },
     {
       "id": "ui-bbf89412",
-      "name": "Click AddToCartButton#onClick on /products (POST /api/cart/items)",
+      "name": "User can add to cart",
       "steps": [
         "ui: Open /products | check /products",
-        "ui: Click in AddToCartButton to run AddToCartButton#onClick",
+        "ui: Press Add to cart",
         "api: Calls POST /api/cart/items"
       ]
     },
     {
       "id": "ui-2f589ec9",
-      "name": "Submit OrdersPage#form on /account/orders (DELETE /api/orders/:orderId)",
+      "name": "User can cancel order",
       "steps": [
         "subflow: Log in first: guarded by middleware -> ui-082b51bb",
         "ui: Open /account/orders | check /account/orders",
-        "ui: Fill in and submit OrdersPage#form, which runs cancelOrder",
+        "ui: Press Cancel",
         "api: Calls DELETE /api/orders/:orderId"
       ]
     }

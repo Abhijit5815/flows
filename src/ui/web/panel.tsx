@@ -5,7 +5,7 @@ import type { Flow } from '../../model/flow.ts';
 import type { Evidence } from '../../model/evidence.ts';
 import type { Snippet } from '../api.ts';
 import { blobUrl, get } from './client.ts';
-import { NO_ROUTE, NOT_OBSERVED, place, ROLE_NOT_EXPLORED, STALE, type Item } from './model.ts';
+import { NO_ROUTE, NOT_OBSERVED, place, ROLE_NOT_EXPLORED, STALE, whereOf, type Item } from './model.ts';
 
 const observedPath = (ref: string) => `/api/observed?ref=${encodeURIComponent(ref)}`;
 
@@ -122,6 +122,7 @@ export function Panel({ item, onClose, children }: { item: Item; onClose: () => 
       <header className="panel-head">
         <div>
           <h2>{flow.name}</h2>
+          {whereOf(flow) === undefined ? null : <p className="flow-path">{whereOf(flow)}</p>}
           <p className="muted">
             {flow.id} · {item.repo.role} {item.repo.path} · version {flow.version}
           </p>

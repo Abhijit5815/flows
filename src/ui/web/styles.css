@@ -71,9 +71,10 @@ button.icon { border: none; background: none; font-size: 20px; line-height: 1; p
 .is-selected { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent); }
 .is-off { opacity: 0.55; }
 .flow-badges, .step-badges { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 4px; }
-.flow-name { font-weight: 600; font-size: 13px; overflow-wrap: anywhere; }
+.flow-name { font-weight: 600; font-size: 13px; line-height: 18px; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-clamp: 3; overflow: hidden; }
+.flow-path { color: var(--muted); font-family: var(--mono); font-size: 11.5px; line-height: 17px; margin: 1px 0 0; overflow-wrap: anywhere; }
 .flow-meta { color: var(--muted); font-size: 11px; margin-top: 2px; font-family: var(--mono); overflow-wrap: anywhere; }
-.step-claim { font-size: 12.5px; overflow-wrap: anywhere; }
+.step-claim { font-size: 12.5px; line-height: 17px; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 4; line-clamp: 4; overflow: hidden; }
 .step-kind { text-transform: uppercase; font-size: 10px; letter-spacing: 0.06em; font-weight: 700; color: var(--muted); }
 .kind-subflow { border-style: dashed; }
 .react-flow__edge.is-selected path { stroke: var(--accent); stroke-width: 2; }
@@ -128,6 +129,7 @@ button:disabled, input:disabled, select:disabled { opacity: 0.5; cursor: not-all
 .button-row.tight { margin: 0; gap: 2px; }
 .button-row.tight button { padding: 2px 7px; }
 .button-row > input:not([type]) { flex: 1 1 160px; }
+.button-row > .inline + .inline { margin-left: 10px; } /* Category, Priority, Enabled read as separate controls */
 .field { display: block; color: var(--muted); font-size: 12px; margin: 10px 0 2px; }
 .inline { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); }
 .panel input:not([type]), .panel textarea { width: 100%; }

@@ -1,5 +1,5 @@
 import { flowId, numbered, type DraftStep } from '../engine/candidates.ts';
-import { words } from '../engine/describe.ts';
+import { pageTitle, pressing, userCan, words } from '../engine/describe.ts';
 import { FALLBACK_CATEGORY_ID } from '../model/category.ts';
 import { HTTP_METHODS, type Flow } from '../model/flow.ts';
 import type { Run } from './run.ts';
@@ -162,7 +162,7 @@ export function observedFlows(runs: readonly Run[], patterns: Patterns): Seen[] 
       // A click that went to another page (a button that navigates) opened a page, not a dialog.
       const via = state.from === null ? undefined : run.actions[state.from.action];
       if (via === undefined || via.kind === 'link' || run.states[via.state]?.path !== state.path) {
-        const view: Seen = { flow: observedFlow('ui', `open|${pattern}`, `Open ${pattern}`, [open, ...real(loads).map(callStep)]), run: run.id, page, act: undefined, calls: loads, text: `page: ${pattern}${calls(loads)}`, noise: false };
+        const view: Seen = { flow: observedFlow('ui', `open|${pattern}`, userCan(`view ${pageTitle(pattern)}`), [open, ...real(loads).map(callStep)]), run: run.id, page, act: undefined, calls: loads, text: `page: ${pattern}${calls(loads)}`, noise: false };
         if (login) loginViews.push(view);
         else add(view);
       }
@@ -176,7 +176,7 @@ export function observedFlows(runs: readonly Run[], patterns: Patterns): Seen[] 
           action.kind === 'click'
             ? { kind: 'ui', claim: `Click "${label}"`, evidence: [{ type: 'dom', ref }], check: null, enabled: true }
             : { kind: 'ui', claim: `Fill in and submit the form (${action.fields.join(', ')}) with "${label}"`, evidence: [{ type: 'dom', ref }], check: null, enabled: true };
-        const name = action.kind === 'click' ? `Click "${label}" on ${pattern}` : `Submit the form (${action.fields.join(', ')}) on ${pattern}`;
+        const name = userCan(action.element.text ? pressing(action.element.text) : action.kind === 'click' ? 'use an unlabeled control' : 'submit a form');
         const text = action.kind === 'click' ? `click: ${words(label)}${calls(made)} on ${pattern}` : `form: ${words(label)} (${action.fields.map(words).join(', ')})${calls(made)} on ${pattern}`;
         add({
           flow: observedFlow('ui', `${action.kind}|${pattern}|${label}|${[...action.fields].sort().join(',')}`, name, [open, act, ...real(made).map(callStep)]),

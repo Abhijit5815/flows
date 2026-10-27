@@ -60,7 +60,7 @@ function fakeLlm(fail = false): LlmGateway & { calls: string[] } {
       const reply =
         request.purpose === 'flow-category'
           ? { category: 'browse' }
-          : request.prompt.includes('LoginForm')
+          : request.prompt.includes('press Sign in')
             ? { name: SUPPORTED[0], description: SUPPORTED[1] }
             : { name: 'Buy the whole shop', description: 'Pays for every product in the shop at once.' };
       return request.schema.parse(reply);
@@ -86,7 +86,7 @@ test('flows are judged, named only where the steps support the name, and every s
   const login = set.flows.find((flow) => flow.id === 'ui-082b51bb');
   assert.deepEqual([login?.name, login?.description, login?.category], [SUPPORTED[0], SUPPORTED[1], 'auth']);
   const products = set.flows.find((flow) => flow.id === 'ui-e45ebcf5');
-  assert.equal(products?.name, 'Open /products', 'a made-up LLM name is not used');
+  assert.equal(products?.name, 'User can view the products page', 'a made-up LLM name is not used');
   assert.ok(set.reasons['ui-e45ebcf5'].some((reason) => reason.includes('"Buy the whole shop" is not supported')));
   assert.equal(products?.category, 'browse', 'an unknown category goes to the LLM');
   // Destructive (and unsure) flows are verified but held for review.
@@ -147,6 +147,6 @@ test('with the LLM down, the run goes on from source alone and says so once', as
   const set = await buildFlows(await nextBasic(), none, deps(gateway, offs));
   assert.equal(offs.length, 1);
   assert.equal(gateway.calls.length, 1, 'no call after the first failure');
-  assert.equal(set.flows.find((flow) => flow.id === 'ui-082b51bb')?.name, 'Submit LoginForm#form on /login (POST /api/auth/login)');
+  assert.equal(set.flows.find((flow) => flow.id === 'ui-082b51bb')?.name, 'User can sign in');
   assert.equal(set.flows.find((flow) => flow.id === 'ui-e45ebcf5')?.category, 'uncategorized');
 });

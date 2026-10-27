@@ -7,6 +7,15 @@ export { NO_ROUTE, NOT_OBSERVED, ROLE_NOT_EXPLORED, STALE } from '../../model/ta
 // An observed step whose element has only an XPath to find it by (src/live/snapshot.ts): "no stable selector".
 export const unstable = (step: Flow['steps'][number]): boolean => step.evidence.some((evidence) => evidence.type === 'dom' && / xpath:/.test(evidence.ref));
 
+// Where a flow starts, shown in small type under its name: the page a UI flow opens, or the request an API flow
+// makes when its name doesn't already say it.
+export function whereOf(flow: Flow): string | undefined {
+  const first = flow.steps.find((step) => step.kind !== 'subflow');
+  if (first?.check?.kind === 'ui' && first.check.page !== undefined) return first.check.page;
+  const request = first?.request === undefined ? undefined : `${first.request.method} ${first.request.path}`;
+  return request === flow.name ? undefined : request;
+}
+
 // One flow on the page, with the repo it came from and the engine's notes on it.
 export type Item = { key: string; repo: RepoView; flow: Flow; reasons: string[]; decisions: FlowSet['decisions'][string] | undefined };
 

@@ -33,7 +33,7 @@ test("people's categories and correct verdicts become Decider examples; wrong an
   const deps = { decider: unsure, grounding: unsure, llm: new OptionalLlm(undefined, join(tmp, 'llm.json'), () => undefined), trace: new MemoryTraceSink(), categories: categories(project.config), categoryLabels: [], config: project.config.engine };
   const set = await buildFlows(graph, { verdicts: new Map(), edits: { schema_version: 0, overrides: {}, added: [] } }, deps);
   saveFlows(project, repo, set);
-  const [products, cart, account] = ['Open /products', 'Open /cart', 'Open /account'].map((name) => set.flows.find((flow) => flow.name === name));
+  const [products, cart, account] = ['User can view the products page', 'User can view the cart page', 'User can view the account page'].map((name) => set.flows.find((flow) => flow.name === name));
   assert.ok(products && cart && account);
   saveOverride(fixture, products.id, { category: 'browse', enabled: true }, products.version);
   addRule(fixture, { type: 'feedback', flow: cart.id, kind: 'wrong', added: now() });

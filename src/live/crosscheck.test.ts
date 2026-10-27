@@ -76,27 +76,27 @@ const names = (set: FlowSet, keep: (flow: FlowSet['flows'][number]) => boolean) 
 test('UI: a page and its visible elements confirm a flow, the gaps say why, and what source lacks is observed-only', { skip: browserSkip }, () => {
   const web = sets.web;
   assert.deepEqual(names(web, (flow) => flow.status === 'confirmed'), [
-    'Click AddToCartButton#onClick on /products (POST /api/cart/items)',
-    'Open /',
-    'Open /account',
-    'Open /account/orders',
-    'Open /cart',
-    'Open /login',
-    'Open /products',
-    'Open /products/[id]',
-    'Submit Header#form on / (POST /api/auth/logout)',
-    'Submit LoginForm#form on /login (POST /api/auth/login)',
-    'Submit OrdersPage#form on /account/orders (DELETE /api/orders/:orderId)',
-    'Submit ProfileForm#form on /account (PATCH /api/me)',
+    'User can add to cart',
+    'User can cancel order',
+    'User can save profile',
+    'User can sign in',
+    'User can sign out',
+    'User can view product details',
+    'User can view the account orders page',
+    'User can view the account page',
+    'User can view the cart page',
+    'User can view the home page',
+    'User can view the login page',
+    'User can view the products page',
   ]);
   assert.ok(web.flows.filter((flow) => flow.status === 'confirmed').every((flow) => flow.origin === 'both' && flow.confidence === 1));
-  assert.deepEqual(names(web, (flow) => flow.tags.includes(NOT_OBSERVED)), ['Open /docs/[...slug]']);
+  assert.deepEqual(names(web, (flow) => flow.tags.includes(NOT_OBSERVED)), ['User can view the docs pages']);
   const why = (name: string) => web.reasons[web.flows.find((flow) => flow.name === name)?.id ?? ''] ?? [];
   // Seen but never submitted: confirmed by the visible form, with the explorer's reason kept.
-  assert.ok(why('Submit OrdersPage#form on /account/orders (DELETE /api/orders/:orderId)').includes("the explorer saw it on /account/orders and didn't submit it: rated destructive (p=0.90)"));
-  assert.ok(why('Submit Header#form on / (POST /api/auth/logout)').includes("the explorer saw it on / and didn't submit it: it would end the session"));
-  assert.ok(why('Open /docs/[...slug]').includes('not observed: no run saw /docs/[...slug]'));
-  assert.deepEqual(names(web, (flow) => flow.status === 'observed-only'), ['Click "Close" on /', 'Click "Log in" on /', 'Open /about', 'Submit the form (q) on /products']);
+  assert.ok(why('User can cancel order').includes("the explorer saw it on /account/orders and didn't submit it: rated destructive (p=0.90)"));
+  assert.ok(why('User can sign out').includes("the explorer saw it on / and didn't submit it: it would end the session"));
+  assert.ok(why('User can view the docs pages').includes('not observed: no run saw /docs/[...slug]'));
+  assert.deepEqual(names(web, (flow) => flow.status === 'observed-only'), ['User can close', 'User can log in', 'User can search', 'User can view the about page']);
   assert.ok(web.flows.filter((flow) => flow.status === 'observed-only').every((flow) => flow.origin === 'observed' && !flow.enabled));
   assert.deepEqual(web.roles, [{ guard: 'middleware', node: 'web:guard:middleware', covered: true }]);
 });
@@ -122,14 +122,14 @@ test('API: answered calls confirm their most specific route; writes and unexplor
 });
 
 test('a confirmed flow keeps its code evidence and gains what the run captured; observed evidence names its run', { skip: browserSkip }, () => {
-  const flow = sets.web.flows.find((candidate) => candidate.name === 'Click AddToCartButton#onClick on /products (POST /api/cart/items)');
+  const flow = sets.web.flows.find((candidate) => candidate.name === 'User can add to cart');
   const kinds = flow?.steps.map((step) => step.evidence.map((evidence) => evidence.type).join('+'));
   assert.deepEqual(kinds, ['code+dom+screenshot', 'code+code+dom', 'code+network']);
   assert.ok(flow?.steps.flatMap((step) => step.evidence).every((evidence) => evidence.type === 'code' || /^explorer-[a-z0-9-]+#[sar]\d+/.test(evidence.ref)));
 });
 
 test("a gap tag is added on top of a person's own tags, so editing tags never hides it", { skip: browserSkip }, async () => {
-  const docs = sets.web.flows.find((flow) => flow.name === 'Open /docs/[...slug]');
+  const docs = sets.web.flows.find((flow) => flow.name === 'User can view the docs pages');
   assert.ok(docs);
   const edits = { schema_version: 0 as const, overrides: { [docs.id]: { tags: ['smoke'], version: 2, edited: '2026-10-20T10:00:00.000Z' } }, added: [] };
   const again = await buildFlows(graphs[0].graph, { verdicts: new Map(), edits }, deps, liveFor(project, graphs[0].repo, graphs));

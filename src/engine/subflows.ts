@@ -17,7 +17,8 @@ export function isLogin(flow: Flow, graph: Lookup): boolean {
   const { entry, act, call } = shape(flow, graph);
   if (entry?.kind === 'route') return entry.attrs.method === 'POST' && LOGIN_PATH.test(entry.attrs.path);
   if (entry === undefined || act[0]?.kind !== 'form') return false;
-  return [entry, ...act, ...(call === undefined ? [] : [call])].some((node) => LOGIN_WORDS.test(words(label(node))));
+  const texts = act.flatMap((node) => (node.kind === 'form' ? (node.attrs.submit ?? []) : node.kind === 'action' ? (node.attrs.text ?? []) : []));
+  return [...[entry, ...act, ...(call === undefined ? [] : [call])].map((node) => words(label(node))), ...texts].some((text) => LOGIN_WORDS.test(text));
 }
 
 // PLAN.md Phase 4: Login is proposed as a shared subflow. Every flow whose entry is behind a guard starts with a step

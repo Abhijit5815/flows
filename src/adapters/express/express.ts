@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { STATUS_CODES } from 'node:http';
 import { Node, SyntaxKind } from 'ts-morph';
 import { z } from 'zod';
 import { PatternRuleSchema } from '../../ingest/match.ts';
@@ -9,11 +10,13 @@ import type { ExtractContext, FrameworkAdapter, Unrecognised } from '../adapter.
 // The rules are data (rules.json); this file follows what they match: routers, mounts, routes, handlers,
 // guards, request schemas, responses and the Prisma models a handler touches.
 const RULES = z
-  .object({ patterns: z.array(PatternRuleSchema), suspects: z.array(PatternRuleSchema), guards: z.object({ libraries: z.record(z.string(), z.int().min(400).max(599)), name: z.string(), body: z.string() }) })
+  .object({ patterns: z.array(PatternRuleSchema), suspects: z.array(PatternRuleSchema), guards: z.object({ libraries: z.record(z.string(), z.union([z.int().min(400).max(599), z.object({ status: z.int().min(400).max(599), call: z.string().min(1) })])), name: z.string(), body: z.string() }) })
   .parse(JSON.parse(readFileSync(new URL('./rules.json', import.meta.url), 'utf8')));
 const GUARD_NAME = new RegExp(RULES.guards.name, 'i');
 const GUARD_BODY = new RegExp(RULES.guards.body);
 
+// Status constants by name, as status libraries spell them: httpStatus.NOT_FOUND, StatusCodes.UNAUTHORIZED.
+const STATUS_BY_NAME = new Map(Object.entries(STATUS_CODES).map(([code, text]) => [String(text).toUpperCase().replace(/[^A-Z0-9]+/g, '_').replace(/^_|_$/g, ''), Number(code)]));
 const ROUTE_METHODS = new Set(['get', 'post', 'put', 'patch', 'delete', 'head', 'options', 'all']);
 // Response methods that finish a request, with the status they send when no .status(n) comes first.
 const SENDS = new Map([['json', 200], ['send', 200], ['jsonp', 200], ['end', 200], ['render', 200], ['sendFile', 200], ['download', 200], ['sendStatus', 200], ['redirect', 302]]);
@@ -62,12 +65,20 @@ function annotatedKind(node: Node): 'app' | 'router' | undefined {
 }
 
 // The status an auth library's middleware rejects with, when the expression builds one: jwt({...}) from express-jwt.
+// A library listed with a call guards only through that call: passport.authenticate(...) rejects, passport.initialize()
+// does not.
 function libraryStatus(expression: Node): number | undefined {
   if (!Node.isCallExpression(expression)) return undefined;
+  const called: string[] = [];
   let base = expression.getExpression();
-  while (Node.isPropertyAccessExpression(base) || Node.isCallExpression(base)) base = base.getExpression();
+  while (Node.isPropertyAccessExpression(base) || Node.isCallExpression(base)) {
+    if (Node.isPropertyAccessExpression(base)) called.push(base.getName());
+    base = base.getExpression();
+  }
   const module = Node.isIdentifier(base) ? importOf(base)?.module : undefined;
-  return module === undefined ? undefined : RULES.guards.libraries[module];
+  const library = module === undefined ? undefined : RULES.guards.libraries[module];
+  if (library === undefined || typeof library === 'number') return library;
+  return called.includes(library.call) ? library.status : undefined;
 }
 
 // A Zod schema (built from z, or derived from another schema) or a class-validator DTO.
@@ -351,7 +362,8 @@ function extract({ facts, files, read, resolver, graph, guards }: ExtractContext
         const object = body === undefined ? undefined : resolver.values(body, env).find((value) => Node.isObjectLiteralExpression(value));
         const properties = Node.isObjectLiteralExpression(object) ? object.getProperties() : [];
         const fields = properties.flatMap((property) => (Node.hasName(property) ? [property.getName()] : []));
-        const messages = literals([...(Node.isCallExpression(here) && here !== call ? here.getArguments() : []), ...properties.flatMap((property) => (Node.isPropertyAssignment(property) ? [property.getInitializerOrThrow()] : []))]);
+        // The text at the site: fail(res, 404, 'not found') through a helper, or res.status(404).json('Not found') itself.
+        const messages = literals([...(Node.isCallExpression(here) ? here.getArguments() : []), ...properties.flatMap((property) => (Node.isPropertyAssignment(property) ? [property.getInitializerOrThrow()] : []))]);
         const seen = sent.get(status);
         if (seen === undefined) sent.set(status, { fields, messages, site: here });
         else {
@@ -398,10 +410,35 @@ function extract({ facts, files, read, resolver, graph, guards }: ExtractContext
 
   // A response node per status a function sends, linked from the handler, guard or middleware it belongs to.
   const responded = new Set<string>();
+  // Errors a function makes for the app's error handler to send: throw new ApiError(httpStatus.NOT_FOUND, 'User not
+  // found'), next(new HttpError(401)), reject(...). In its own body and one call away (the service it calls).
+  const statusOf = (arg: Node): number | undefined => resolver.number(arg, NO_ENV) ?? (Node.isPropertyAccessExpression(arg) ? STATUS_BY_NAME.get(arg.getName()) : undefined);
+  const collectErrors = (fn: Node, depth: number, sent: Sent): void => {
+    for (const made of fn.getDescendantsOfKind(SyntaxKind.NewExpression)) {
+      if (!/(Error|Exception)$/.test(made.getExpression().getText())) continue;
+      const [first, ...rest] = made.getArguments();
+      const status = first === undefined ? undefined : statusOf(first);
+      if (status === undefined || status < 400 || status > 599) continue;
+      const messages = literals(rest);
+      const seen = sent.get(status);
+      if (seen === undefined) sent.set(status, { fields: [], messages, site: made });
+      else seen.messages.push(...messages.filter((message) => !seen.messages.includes(message)));
+    }
+    if (depth > 0) return;
+    for (const call of fn.getDescendantsOfKind(SyntaxKind.CallExpression)) {
+      const callee = call.getExpression();
+      const name = Node.isPropertyAccessExpression(callee) ? callee.getNameNode() : callee;
+      const declaration = Node.isIdentifier(name) ? name.getDefinitionNodes()[0] : undefined;
+      const target = Node.isVariableDeclaration(declaration) ? declaration.getInitializer() : declaration;
+      if (target !== undefined && target !== fn && isFunctionLike(target) && inProject(target)) collectErrors(target, depth + 1, sent);
+    }
+  };
+
   const addResponses = (owner: string, name: string, fn: Node): void => {
     const sent: Sent = new Map();
     const response = Node.isArrowFunction(fn) || Node.isFunctionExpression(fn) || Node.isFunctionDeclaration(fn) || Node.isMethodDeclaration(fn) ? fn.getParameters()[1] : undefined;
     if (response !== undefined) collectResponses(fn, new Set([keyOf(response)]), NO_ENV, 0, undefined, sent);
+    if (response !== undefined) collectErrors(fn, 0, sent);
     for (const [status, { fields, messages, site }] of sent) {
       const node = graph.add(`${owner}#${status}`, { kind: 'response', name: `${name}#${status ?? 'unknown'}`, ...resolver.where(site), attrs: { status, fields, ...(messages.length > 0 ? { messages } : {}) } });
       graph.edge(owner, node, 'responds-with');
@@ -409,14 +446,28 @@ function extract({ facts, files, read, resolver, graph, guards }: ExtractContext
   };
 
   const handled = new Map<string, Node[]>();
+  // A handler wrapped by a helper (catchAsync(async (req, res) => ...), asyncHandler(fn)) is the function it wraps,
+  // found from the call that wraps it: the helper is often library code, and evaluating it gives its shared inner function.
+  // Named after the variable that holds the wrapped call (const getUser = catchAsync(...)).
+  const wrapped = (expression: Node, env: Env): { fn: Node; name?: string } | undefined => {
+    const name = Node.isPropertyAccessExpression(expression) ? expression.getNameNode() : expression;
+    const definition = Node.isIdentifier(name) ? name.getDefinitionNodes()[0] : undefined;
+    const call = Node.isCallExpression(expression) ? expression : Node.isVariableDeclaration(definition) ? definition.getInitializer() : undefined;
+    if (!Node.isCallExpression(call)) return undefined;
+    const handles = (value: Node) => isFunctionLike(value) && inProject(value) && (Node.isArrowFunction(value) || Node.isFunctionExpression(value) || Node.isFunctionDeclaration(value)) && value.getParameters().length >= 2;
+    const fn = call.getArguments().flatMap((arg) => resolver.values(arg, env)).find(handles);
+    return fn === undefined ? undefined : { fn, ...(Node.isVariableDeclaration(definition) ? { name: qualifiedName(definition) ?? definition.getName() } : {}) };
+  };
+
   const addHandler = (route: string, expression: Node, env: Env, inline: string): void => {
-    const fn = resolver.values(expression, env).find((value) => isFunctionLike(value) && inProject(value));
+    const wrapper = wrapped(expression, env);
+    const fn = wrapper?.fn ?? resolver.values(expression, env).find((value) => isFunctionLike(value) && inProject(value));
     if (fn === undefined) {
       notes.push({ ...resolver.where(expression), reason: `handler ${expression.getText()} could not be resolved` });
       return;
     }
     const holder = holderOf(fn);
-    const name = qualifiedName(holder) ?? inline;
+    const name = wrapper?.name ?? qualifiedName(holder) ?? inline;
     const handler = graph.add(keyOf(holder), { kind: 'handler', name, ...resolver.where(holder), attrs: { name } });
     graph.edge(route, handler, 'handled-by');
     if (!handled.has(handler)) {
@@ -426,6 +477,15 @@ function extract({ facts, files, read, resolver, graph, guards }: ExtractContext
     }
     for (const schema of handled.get(handler) ?? []) addSchema(route, schema, NO_ENV);
   };
+
+  // Decorator controllers (routing-controllers' @JsonController('/users') with @Get('/:id')) are a framework of their
+  // own; say so where they are rather than finding nothing.
+  for (const file of files.filter((path) => /\.[cm]?[jt]sx?$/.test(path))) {
+    const text = read(file);
+    if (!/from ['"]routing-controllers['"]/.test(text)) continue;
+    const line = text.split('\n').findIndex((row) => /@(Json)?Controller\(/.test(row));
+    if (line >= 0) notes.push({ file, line: line + 1, reason: 'a routing-controllers decorator controller: Flows does not read these routes yet' });
+  }
 
   for (const registration of registrations) {
     for (const router of registration.routers) {

@@ -118,46 +118,46 @@ export const API_FAKES: Fake[] = [
 // The next-basic fixture's UI graph.
 export const UI_FAKES: Fake[] = [
   { name: 'a page that does not exist', make: one((kit) => {
-    const flow = kit.copy('Open /products');
+    const flow = kit.copy('User can view the products page');
     Object.assign(flow.steps[0], { claim: 'Open /checkout', evidence: [{ type: 'code', node_id: 'web:page:/checkout', ref: 'app/(shop)/checkout/page.tsx:3' }], check: null });
     return flow;
   }) },
   { name: 'a form from another page', make: one((kit) => {
-    const flow = kit.copy('Submit LoginForm#form on /login (POST /api/auth/login)');
-    const profile = kit.flow('Submit ProfileForm#form on /account (PATCH /api/me)').steps.find((step) => step.claim.startsWith('Fill in'));
+    const flow = kit.copy('User can sign in');
+    const profile = kit.flow('User can save profile').steps.find((step) => step.claim.startsWith('Fill in'));
     if (profile !== undefined) flow.steps[1] = { ...structuredClone(profile), id: 's2' };
     return flow;
   }) },
   { name: 'an API call the action does not make', make: one((kit) => {
-    const flow = kit.copy('Submit LoginForm#form on /login (POST /api/auth/login)');
+    const flow = kit.copy('User can sign in');
     last(flow).request = { method: 'POST', path: '/api/auth/register' };
     return flow;
   }) },
   { name: 'an element the page does not show', make: one((kit) => {
-    const flow = kit.copy('Open /login');
-    const form = kit.flow('Submit ProfileForm#form on /account (PATCH /api/me)').steps.find((step) => step.claim.startsWith('Fill in'))?.evidence[0];
+    const flow = kit.copy('User can view the login page');
+    const form = kit.flow('User can save profile').steps.find((step) => step.claim.startsWith('Fill in'))?.evidence[0];
     if (form !== undefined) flow.steps[0].check = { kind: 'ui', element: 'ProfileForm#form', evidence: [form] };
     return flow;
   }) },
   { name: 'a page the step does not open', make: one((kit) => {
-    const flow = kit.copy('Open /login');
-    const account = kit.flow('Open /account').steps.find((step) => step.kind === 'ui')?.evidence[0];
+    const flow = kit.copy('User can view the login page');
+    const account = kit.flow('User can view the account page').steps.find((step) => step.kind === 'ui')?.evidence[0];
     if (account !== undefined) flow.steps[0].check = { kind: 'ui', page: '/account', evidence: [account] };
     return flow;
   }) },
   { name: 'a UI step that cites only an API call', make: one((kit) => {
-    const flow = kit.copy('Submit LoginForm#form on /login (POST /api/auth/login)');
+    const flow = kit.copy('User can sign in');
     flow.steps[1] = { ...flow.steps[1], claim: 'Calls POST /api/auth/login', evidence: structuredClone(last(flow).evidence) };
     return flow;
   }) },
   { name: 'a made-up claim on a real form', make: one((kit) => {
-    const flow = kit.copy('Submit ProfileForm#form on /account (PATCH /api/me)');
+    const flow = kit.copy('User can save profile');
     const fill = flow.steps.find((step) => step.claim.startsWith('Fill in'));
     if (fill !== undefined) fill.claim = 'Pay for the order with a saved card';
     return flow;
   }) },
   { name: 'an API check in a UI flow', make: one((kit) => {
-    const flow = kit.copy('Submit LoginForm#form on /login (POST /api/auth/login)');
+    const flow = kit.copy('User can sign in');
     last(flow).check = { kind: 'api', status: 200, evidence: structuredClone(last(flow).evidence) };
     return flow;
   }) },

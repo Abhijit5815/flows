@@ -71,14 +71,14 @@ test('an action that can make several calls gives one flow per call; a click wit
   const found = candidates(graph);
   assert.deepEqual(
     found.flows.map((flow) => flow.name),
-    ['Open /', 'Submit Auth#form on / (POST /login)', 'Submit Auth#form on / (POST /register)', 'Click track on /'],
+    ['User can view the home page', 'User can submit the auth form (POST /login)', 'User can submit the auth form (POST /register)', 'User can track'],
   );
   assert.deepEqual(found.skipped.map((skip) => skip.node), ['web:action:toggle']);
 });
 
 test('a call to another service is left out of its flow and noted, not guessed', () => {
   const found = candidates(graph);
-  const track = found.flows.find((flow) => flow.name.startsWith('Click track'));
+  const track = found.flows.find((flow) => flow.name === 'User can track');
   assert.ok(track);
   assert.deepEqual(track.steps.map((step) => step.kind), ['ui', 'ui']);
   assert.match(found.notes[track.id]?.[0] ?? '', /calls another service/);
@@ -104,6 +104,6 @@ test('with no login flow, or with two, guarded flows get no Log-in step and a no
   const two = addLoginSubflows(flows, lookup(guarded));
   assert.ok(two.flows.every((flow) => flow.steps.every((step) => step.kind !== 'subflow')));
   assert.match(two.notes[0], /2 flows look like logging in/);
-  const none = addLoginSubflows(flows.filter((flow) => !flow.name.startsWith('Submit')), lookup(guarded));
+  const none = addLoginSubflows(flows.filter((flow) => flow.name.startsWith('User can view')), lookup(guarded));
   assert.match(none.notes[0], /no login flow was found/);
 });

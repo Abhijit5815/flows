@@ -39,6 +39,83 @@ export const words = (identifier: string): string =>
 
 const OWNERS = new Set(['component', 'page', 'layout']);
 
+// Names and step texts say what a person sees and does, never an identifier or a file path: the button's text first,
+// then the action's own words, then what the form or component is about.
+const GENERIC_TEXT = /^(save|submit|ok|send|go|confirm|continue|apply|update|done|yes|no|cancel|delete|remove)$/i;
+const genericAction = (name: string) => /#|^(handle|on)[A-Z_]|^(submit|action|handler)$/.test(name);
+// Words a phrase can start with to say what a user does; anything else is a label to press ("Prev", "New post").
+const VERBS = new Set(
+  ('accept add apply approve archive book buy cancel change checkout choose clear close comment confirm connect continue copy create ' +
+    'decline delete disable dismiss download duplicate edit enable export filter follow generate get go hide import invite join leave like load ' +
+    'log login logout manage mark move open order pay pin post preview print proceed publish rate redirect refresh register reject remove rename ' +
+    'reply report request reset restore retry save schedule search select send set share show sign signin signout signup sort start stop ' +
+    'submit subscribe switch sync toggle track try undo unfollow unsubscribe update upgrade upload verify view vote watch').split(' '),
+);
+const startsWithVerb = (phrase: string) => VERBS.has(phrase.split(' ')[0].toLowerCase());
+const capital = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
+const list = (items: readonly string[]) => (items.length < 2 ? items.join('') : `${items.slice(0, -1).join(', ')} and ${items.at(-1)}`);
+// A label in Title Case ("Sign Out", "Invite Member") said as a sentence; "Sign in with GitHub" keeps its name.
+const SMALL = new Set(['a', 'an', 'and', 'as', 'at', 'by', 'for', 'in', 'of', 'on', 'or', 'the', 'to', 'up', 'with']);
+const spoken = (text: string) => {
+  const main = text.split(' ').filter((word) => !SMALL.has(word.toLowerCase()));
+  const title = main.length > 1 && main.every((word) => /^[A-Z0-9]/.test(word));
+  return text
+    .split(' ')
+    .map((word, i) => (/^[A-Z][a-z]+$/.test(word) && (i === 0 || title) ? word.toLowerCase() : word))
+    .join(' ');
+};
+// "ProfileForm#form" -> "profile", "AddToCartButton" -> "add to cart", "PostOperations" -> "post": what it is about,
+// without the words for its UI parts.
+const subject = (node: GraphNode) =>
+  words(label(node).replace(/@.*$/, ''))
+    .replace(/\b(form|page|button|component|section|dialog|modal|action|on click|onclick|card|skeleton|selector|operations|wrapper|container|client|panel)\b/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+// The label a person presses: a formAction button's own, else the form's submit button, else the clicked element's.
+const shown = (act: readonly (GraphNode | undefined)[]) => {
+  const [first, second] = act;
+  if (first?.kind === 'form') return (second?.kind === 'action' ? second.attrs.text : undefined) ?? first.attrs.submit;
+  return first?.kind === 'action' ? first.attrs.text : undefined;
+};
+
+// A label a person presses, as what they do: "Sign Out" -> "sign out", "Prev" -> "press Prev".
+export const pressing = (text: string): string => (startsWithVerb(text) ? spoken(text) : `press ${text}`);
+
+// A flow's name says what a user can do, in plain words; the page or route it starts at is shown under the name, so
+// it isn't repeated in it.
+export const userCan = (doing: string): string => `User can ${doing}`;
+
+// What a page is, in words: "/" -> "the home page", "/account/orders" -> "the account orders page",
+// "/products/[id]" -> "product details", "/docs/[...slug]" -> "the docs pages".
+export function pageTitle(path: string): string {
+  const segments = path.split('/').filter((segment) => segment !== '' && !/^\(.*\)$/.test(segment));
+  const last = segments.at(-1);
+  if (last === undefined) return 'the home page';
+  const named = segments.filter((segment) => !/^[[:]/.test(segment)).map((segment) => segment.replace(/[-_]+/g, ' '));
+  if (/^\[\[?\.\.\./.test(last)) return named.length === 0 ? 'any page by its path' : `the ${named.join(' ')} pages`;
+  if (/^[[:]/.test(last)) {
+    const noun = (named.at(-1) ?? 'item').replace(/ies$/, 'y').replace(/([^s])s$/, '$1');
+    return `${[...named.slice(0, -1), noun].join(' ')} details`;
+  }
+  return `the ${named.join(' ')} page`;
+}
+
+// What a person does in a form or a click, as they'd say it after "User can": "sign in", "cancel order", "save
+// profile", "press Prev" (a label that isn't a verb is pressed, as written).
+export function actName(act: readonly GraphNode[]): string | undefined {
+  const [first, second] = act;
+  const action = [first, second].find((node) => node?.kind === 'action');
+  const text = shown(act);
+  const did = action?.kind === 'action' && !genericAction(action.attrs.name) ? words(action.attrs.name).replace(/ (action|handler)$/, '') : '';
+  const about = first === undefined ? '' : subject(first.kind === 'action' && second !== undefined ? second : first);
+  const phrase = (doing: string) => (startsWithVerb(doing) ? doing : `use ${doing}`);
+  if (text !== undefined && !GENERIC_TEXT.test(text)) return pressing(text);
+  if (did !== '') return phrase(did);
+  if (text !== undefined) return about === '' ? spoken(text) : `${spoken(text)} ${about}`;
+  if (about === '') return undefined;
+  return startsWithVerb(about) ? about : first?.kind === 'form' ? `submit the ${about} form` : `use ${about}`;
+}
+
 // A generated Log-in step starts with this; a subflow step a person makes says which flow it runs.
 export const LOGIN_CLAIM = 'Log in first:';
 export const runClaim = (name: string): string => `Run "${name}"`;
@@ -51,10 +128,13 @@ export function claimOf(kind: Step['kind'], nodes: readonly GraphNode[]): string
   if (first === undefined || rest.length > 0) return undefined;
   if (kind === 'ui' && first.kind === 'page' && second === undefined) return `Open ${label(first)}`;
   if (kind === 'ui' && first.kind === 'form' && (second === undefined || second.kind === 'action')) {
-    const fields = first.attrs.fields.length > 0 ? ` (${first.attrs.fields.join(', ')})` : '';
-    return `Fill in and submit ${label(first)}${fields}${second === undefined ? '' : `, which runs ${label(second)}`}`;
+    const text = shown([first, second]);
+    const press = text === undefined ? `submit the ${subject(first) || 'form'}${subject(first) === '' ? '' : ' form'}` : `press ${text}`;
+    return first.attrs.fields.length > 0 ? `Fill in ${list(first.attrs.fields)}, then ${press}` : capital(press);
   }
-  if (kind === 'ui' && first.kind === 'action' && second !== undefined && OWNERS.has(second.kind)) return `Click in ${label(second)} to run ${label(first)}`;
+  if (kind === 'ui' && first.kind === 'action' && second !== undefined && OWNERS.has(second.kind)) {
+    return first.attrs.text === undefined ? `Click in ${subject(second) || 'the page'} to ${actName([first, second]) ?? 'act'}` : `Press ${first.attrs.text}`;
+  }
   if (kind === 'api' && first.kind === 'api-call' && second === undefined) return `Calls ${label(first)}`;
   if (kind === 'api' && first.kind === 'route' && (second === undefined || second.kind === 'handler')) {
     // An inline handler is named after its route, so naming it again says nothing.
@@ -97,10 +177,12 @@ export function flowName(flow: Pick<Flow, 'steps'>, graph: Lookup): string | und
   const { entry, act, call } = shape(flow, graph);
   if (entry?.kind === 'route') return label(entry);
   if (entry?.kind !== 'page') return undefined;
-  const target = call === undefined ? '' : ` (${label(call)})`;
-  if (act[0]?.kind === 'form') return `Submit ${label(act[0])} on ${label(entry)}${target}`;
-  if (act[0]?.kind === 'action') return `Click ${label(act[0])} on ${label(entry)}${target}`;
-  return `Open ${label(entry)}`;
+  // One action that can make several calls is a flow per call: only then does the call tell them apart.
+  const action = act.find((node) => node.kind === 'action');
+  const which = action !== undefined && call !== undefined && graph.out(action.id, 'calls').length > 1 ? ` (${label(call)})` : '';
+  if (act[0]?.kind === 'form') return `${userCan(actName(act) ?? 'submit a form')}${which}`;
+  if (act[0]?.kind === 'action') return `${userCan(actName(act) ?? 'use the page')}${which}`;
+  return userCan(`view ${pageTitle(label(entry))}`);
 }
 
 // One line per flow for the Decider (destructive-risk, flow-category), in the format of the tasks' examples.

@@ -34,7 +34,11 @@ const LANGUAGES: Record<string, Lang> = {
   '.cjs': Lang.JavaScript,
 };
 
-export const isSource = (path: string): boolean => extname(path) in LANGUAGES && !path.endsWith('.d.ts');
+// Tests define routes and pages of their own (a fake app to test middleware against), so they are not the app's source:
+// *.test.* and *.spec.* files, __tests__ and __mocks__ folders, and test folders at the repo's root. A test folder
+// deeper in (app/test/page.tsx) can be a real page, so it stays.
+const TEST_FILE = /\.(test|spec)\.[cm]?[jt]sx?$|(^|\/)(__tests__|__mocks__)\/|^(tests?|e2e|cypress|playwright)\//;
+export const isSource = (path: string): boolean => extname(path) in LANGUAGES && !path.endsWith('.d.ts') && !TEST_FILE.test(path);
 
 export const languageOf = (path: string): Lang | undefined => LANGUAGES[extname(path)];
 

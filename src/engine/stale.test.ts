@@ -31,7 +31,7 @@ test("a person's flow citing code that is gone is tagged stale and kept; a gener
   };
 
   const first = await scan();
-  const click = first.flows.find((flow) => flow.name === 'Click AddToCartButton#onClick on /products (POST /api/cart/items)');
+  const click = first.flows.find((flow) => flow.name === 'User can add to cart');
   assert.ok(click);
   saveAdded(fixture, { ...click, id: 'ui-mine', name: 'My add to cart' });
 

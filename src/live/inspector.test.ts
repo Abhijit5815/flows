@@ -103,11 +103,11 @@ test('free mode: pointing shows what source knows, the person writes for real, a
   // The cross-check uses the correction: that click is no longer the source's add-to-cart, so it shows as observed-only.
   saveRun(project, run);
   const after = await buildFlows(graph, { verdicts: new Map(), edits: { schema_version: 0, overrides: {}, added: [] } }, deps(), liveFor(project, repo, [{ repo, graph }]));
-  assert.ok(after.flows.some((flow) => flow.status === 'observed-only' && flow.name === 'Click "Add to cart" on /products'));
+  assert.ok(after.flows.some((flow) => flow.status === 'observed-only' && flow.name === 'User can add to cart'));
 });
 
 test('guided mode: each step of the flow is ticked as the person does it', { skip: browserSkip }, async () => {
-  const flow = set.flows.find((candidate) => candidate.name === 'Open /products');
+  const flow = set.flows.find((candidate) => candidate.name === 'User can view the products page');
   assert.ok(flow);
   const steps = guidedSteps(flow, indexOf(graph));
   const { run, ticked } = await walk(

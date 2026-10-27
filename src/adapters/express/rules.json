@@ -8,11 +8,6 @@
       "constraints": {
         "M": {
           "regex": "^(get|post|put|patch|delete|head|options|all)$"
-        },
-        "R": {
-          "not": {
-            "kind": "call_expression"
-          }
         }
       }
     },
@@ -30,7 +25,7 @@
     }
   ],
   "guards": {
-    "libraries": { "express-jwt": 401, "passport": 401, "express-oauth2-jwt-bearer": 401 },
+    "libraries": { "express-jwt": 401, "passport": { "status": 401, "call": "authenticate" }, "express-oauth2-jwt-bearer": 401 },
     "name": "auth|guard|protect|jwt|permission|role|logged.?in|signed.?in",
     "body": "\\bjwt\\b|passport\\.authenticate|\\.verify\\(|\\b40[13]\\b"
   },

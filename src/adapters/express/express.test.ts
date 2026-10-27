@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { addRepo } from '../../config/project.ts';
 import { scanRepo } from '../../ingest/pipeline.ts';
 import { tempProject } from '../../shared/testing/project.ts';
+import { candidates } from '../../engine/candidates.ts';
 import { expressAdapter, joinPath } from './express.ts';
 import { routeViews } from './views.ts';
 
@@ -147,4 +148,46 @@ test('guards built by an auth library are guards, with the status the library re
   assert.deepEqual(guarded('GET /articles'), []);
   const optional = graph.edges.find((edge) => edge.from === 'api:route:GET /articles' && edge.kind === 'uses');
   assert.deepEqual(graph.edges.filter((edge) => edge.from === optional?.to && edge.kind === 'responds-with').map((edge) => edge.to), ['api:response:optional#401']);
+});
+
+// From the bug-hunting pass on unseen apps (node-express-boilerplate, express-ts-api-boilerplate, express-typescript,
+// express-typescript-api, w3tecch's boilerplate): CommonJS, wrapped handlers, thrown errors, chained route calls, test
+// files, passport.initialize(), CORS preflight and decorator controllers, in one small app.
+test('patterns from unseen apps: wrapped handlers, thrown errors, chained routes, and what is not a route or a guard', async () => {
+  const dir = join(tmp, 'hunt-app');
+  const write = (file: string, text: string) => {
+    mkdirSync(join(dir, file, '..'), { recursive: true });
+    writeFileSync(join(dir, file), text);
+  };
+  write('package.json', JSON.stringify({ dependencies: { express: '^4.19.2', passport: '^0.7.0', 'http-status': '^1.7.0', cors: '^2.8.5', 'routing-controllers': '^0.10.0' } }));
+  write('src/app.js', "const express = require('express');\nconst passport = require('passport');\nconst cors = require('cors');\nconst routes = require('./routes');\nconst app = express();\napp.use(passport.initialize());\napp.options('*', cors());\napp.use('/v1', routes);\nmodule.exports = app;\n");
+  write('src/routes.js', "const express = require('express');\nconst users = require('./users.controller');\nconst router = express.Router();\nrouter.get('/users/:id', users.getUser).post('/users', users.createUser);\nrouter.get('/health', (req, res) => res.status(503).json('Not ready'));\nmodule.exports = router;\n");
+  write('src/catchAsync.js', 'module.exports = (fn) => (req, res, next) => {\n  Promise.resolve(fn(req, res, next)).catch(next);\n};\n');
+  write('src/ApiError.js', 'class ApiError extends Error {\n  constructor(statusCode, message) {\n    super(message);\n    this.statusCode = statusCode;\n  }\n}\nmodule.exports = ApiError;\n');
+  write('src/users.service.js', "const ApiError = require('./ApiError');\nconst find = async (id) => null;\nconst create = async (body) => {\n  if (!body.email) throw new ApiError(400, 'Email is required');\n  return body;\n};\nmodule.exports = { find, create };\n");
+  write(
+    'src/users.controller.js',
+    "const httpStatus = require('http-status');\nconst ApiError = require('./ApiError');\nconst catchAsync = require('./catchAsync');\nconst service = require('./users.service');\nconst getUser = catchAsync(async (req, res) => {\n  const user = await service.find(req.params.id);\n  if (!user) throw new ApiError(httpStatus.NOT_FOUND, 'User not found');\n  res.send(user);\n});\nconst createUser = catchAsync(async (req, res) => {\n  res.status(201).send(await service.create(req.body));\n});\nmodule.exports = { getUser, createUser };\n",
+  );
+  write('src/routes.test.js', "const express = require('express');\nconst app = express();\napp.get('/fake', (req, res) => res.send('ok'));\n");
+  write('src/PetController.ts', "import { Get, JsonController } from 'routing-controllers';\n\n@JsonController('/pets')\nexport class PetController {\n  @Get('/')\n  list() {\n    return [];\n  }\n}\n");
+
+  const project = tempProject(join(tmp, 'hunt'));
+  const { graph, coverage } = await scanRepo(project, addRepo(project, dir, 'api').config.repos[0]);
+  assert.ok(graph);
+  const routes = graph.nodes.flatMap((node) => (node.kind === 'route' ? [`${node.attrs.method} ${node.attrs.path}`] : [])).sort();
+  assert.deepEqual(routes, ['GET /v1/health', 'GET /v1/users/:id', 'OPTIONS /*', 'POST /v1/users'], 'the chained .post is found; the test file adds nothing');
+  assert.deepEqual(graph.edges.filter((edge) => edge.kind === 'guarded-by'), [], 'passport.initialize() rejects nothing');
+  assert.ok(coverage.unrecognised.some((note) => note.file === 'src/PetController.ts' && /routing-controllers/.test(note.reason)));
+
+  const found = candidates(graph);
+  const errors = (route: string) =>
+    found.flows
+      .find((flow) => flow.name === route)
+      ?.steps.flatMap((step) => step.errors ?? [])
+      .map((error) => (error.kind === 'api' ? `${error.status} ${error.by}: ${error.message ?? ''}` : ''));
+  assert.deepEqual(errors('GET /v1/users/:id'), ['404 getUser: User not found'], 'thrown by the handler catchAsync wraps');
+  assert.deepEqual(errors('POST /v1/users'), ['400 createUser: Email is required'], 'thrown by the service it calls');
+  assert.deepEqual(errors('GET /v1/health'), ['503 the handler: Not ready'], 'sent as text by an inline handler');
+  assert.match(found.skipped.find((skip) => skip.name === 'OPTIONS /*')?.reason ?? '', /CORS preflight/);
 });

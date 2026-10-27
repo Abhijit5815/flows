@@ -27,9 +27,9 @@ const WebNodeSchema = z.discriminatedUnion('kind', [
   node('page', z.object({ path: z.string().startsWith('/') })),
   node('layout', z.object({ path: z.string().startsWith('/') })),
   node('component', Named),
-  node('form', z.object({ fields: z.array(z.string().min(1)) })),
+  node('form', z.object({ fields: z.array(z.string().min(1)), submit: z.string().min(1).optional() })), // submit: its button's text
   // redirects: where it sends the browser (redirect('/account')); messages: the strings it returns for the form to show.
-  node('action', z.object({ name: z.string().min(1), server: z.boolean(), redirects: z.array(z.string().startsWith('/')).optional(), messages: z.array(z.string().min(1)).optional() })),
+  node('action', z.object({ name: z.string().min(1), server: z.boolean(), redirects: z.array(z.string().startsWith('/')).optional(), messages: z.array(z.string().min(1)).optional(), text: z.string().min(1).optional(), library: z.string().min(1).optional() })),
   node('guard', Named),
   // Not linked in the graph; the flow engine links it to the route that answers it. The path may be a full URL (another service).
   node('api-call', z.object({ method: MethodSchema, path: z.string().min(1) })),

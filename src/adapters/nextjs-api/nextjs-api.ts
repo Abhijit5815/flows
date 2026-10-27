@@ -1,9 +1,9 @@
-import { Node } from 'ts-morph';
+import { Node, SyntaxKind } from 'ts-morph';
 import { isSource } from '../../ingest/match.ts';
 import { holderOf, inProject, isFunctionLike, keyOf } from '../../ingest/resolve.ts';
 import { HTTP_METHODS } from '../../model/flow.ts';
 import type { ExtractContext, FrameworkAdapter, Unrecognised } from '../adapter.ts';
-import { routePath } from '../nextjs-app/nextjs.ts';
+import { middlewareGuard, routePath } from '../nextjs-app/nextjs.ts';
 import { parsedSchemas, schemaNode } from '../schemas.ts';
 
 // Next.js App Router route handlers (app/**/route.ts) are an API: each exported GET, POST, ... is a route, read for
@@ -17,11 +17,19 @@ function extract({ files, resolver, graph }: ExtractContext): Unrecognised[] {
   const notes: Unrecognised[] = [];
   const appDir = files.some((file) => file.startsWith('app/')) ? 'app' : 'src/app';
 
-  // What a handler answers: NextResponse.json(body, { status }), Response.json(...), new Response(body, { status }).
-  // shortcut: only the handler's own body is read, not helpers it returns through; follow them if apps need it.
+  // What a handler answers: NextResponse.json(body, { status }), Response.json(...), new Response(body, { status }), in
+  // its own body and in the app's functions it calls (return unauthorized(), error.toResponse()), one call deep.
+  // A status computed at run time (from a lookup table) is not known, so that response is left out.
   const addResponses = (handler: string, name: string, fn: Node): void => {
     const sent = new Map<number, { fields: string[]; messages: string[]; site: Node }>();
-    for (const node of fn.getDescendants()) {
+    const helpers = fn.getDescendantsOfKind(SyntaxKind.CallExpression).flatMap((call) => {
+      const callee = call.getExpression();
+      const id = Node.isPropertyAccessExpression(callee) ? callee.getNameNode() : callee;
+      const definition = Node.isIdentifier(id) ? id.getDefinitionNodes()[0] : undefined;
+      const target = Node.isVariableDeclaration(definition) ? definition.getInitializer() : definition;
+      return target !== undefined && target !== fn && (isFunctionLike(target) || Node.isMethodDeclaration(target)) && inProject(target) ? [target] : [];
+    });
+    for (const node of [fn, ...new Set(helpers)].flatMap((each) => each.getDescendants())) {
       const callee = Node.isCallExpression(node) ? node.getExpression() : undefined;
       const json = Node.isPropertyAccessExpression(callee) && callee.getName() === 'json' && RESPONSE.test(callee.getExpression().getText());
       const made = Node.isNewExpression(node) && RESPONSE.test(node.getExpression().getText());
@@ -48,6 +56,11 @@ function extract({ files, resolver, graph }: ExtractContext): Unrecognised[] {
     }
   };
 
+  // Middleware (proxy.ts in Next.js 16) guards the API routes its matcher selects, with what it answers (a 401).
+  const middleware = middlewareGuard({ files, resolver, graph });
+  const body = middleware?.declaration === undefined ? undefined : Node.isVariableDeclaration(middleware.declaration) ? middleware.declaration.getInitializer() : middleware.declaration;
+  if (middleware !== undefined && body !== undefined && isFunctionLike(body)) addResponses(middleware.guard, 'middleware', body);
+
   for (const file of files) {
     if (!file.startsWith(`${appDir}/`) || !isSource(file)) continue;
     const segments = file.slice(appDir.length + 1).split('/');
@@ -59,6 +72,7 @@ function extract({ files, resolver, graph }: ExtractContext): Unrecognised[] {
       const declaration = declarations[0];
       const name = `${method} ${path}`;
       const route = graph.add(`route:${name}`, { kind: 'route', name, ...resolver.where(declaration), attrs: { method: method as (typeof HTTP_METHODS)[number], path } });
+      if (middleware?.covers(routePath(folder))) graph.edge(route, middleware.guard, 'guarded-by');
       const value = Node.isVariableDeclaration(declaration) ? declaration.getInitializer() : declaration;
       const fn = value !== undefined && isFunctionLike(value) && inProject(value) ? value : resolver.values(value ?? declaration).find((each) => isFunctionLike(each) && inProject(each));
       if (fn === undefined) {
@@ -81,7 +95,7 @@ function extract({ files, resolver, graph }: ExtractContext): Unrecognised[] {
 export const nextApiAdapter: FrameworkAdapter = {
   id: 'nextjs-api',
   role: 'api',
-  detection: { dependency: 'next', testedMajor: 14, needsOneOf: ['app', 'src/app'] },
+  detection: { dependency: 'next', testedMajors: [14, 15, 16], needsOneOf: ['app', 'src/app'] },
   rules: [],
   suspects: [],
   extract,

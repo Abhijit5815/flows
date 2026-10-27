@@ -68,7 +68,7 @@ export function detect(dir: string, adapters: readonly FrameworkAdapter[] = ADAP
   const matches: Match[] = [];
   const notes: string[] = [];
   for (const adapter of adapters) {
-    const { dependency, testedMajor, needsOneOf = [] } = adapter.detection;
+    const { dependency, testedMajors, needsOneOf = [] } = adapter.detection;
     const range = dependencies[dependency];
     if (range === undefined) continue;
     const folder = needsOneOf.find((path) => existsSync(join(dir, path)));
@@ -82,7 +82,8 @@ export function detect(dir: string, adapters: readonly FrameworkAdapter[] = ADAP
     if (folder !== undefined) evidence.push(`${folder}/ folder`);
     const version = locked ?? range;
     const major = /\d+/.exec(version)?.[0];
-    const warnings = major !== undefined && Number(major) === testedMajor ? [] : [`${adapter.id} is tested on ${dependency} ${testedMajor}.x; this repo has "${version}"`];
+    const tested = testedMajors.map((each) => `${each}.x`).join(', ');
+    const warnings = major !== undefined && testedMajors.includes(Number(major)) ? [] : [`${adapter.id} is tested on ${dependency} ${tested}; this repo has "${version}"`];
     matches.push({ adapter, version, evidence, warnings });
   }
   return { matches, notes };

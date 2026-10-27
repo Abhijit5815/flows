@@ -53,6 +53,44 @@ function isServerAction(fn: Node): boolean {
   return Node.isBlock(body) && hasDirective(body.getStatements(), 'use server');
 }
 
+// middleware.ts (proxy.ts from Next.js 16) guards the paths its matcher selects; when its logic (or a config it uses)
+// checks pathname.startsWith('/x'), only paths under those prefixes count. Shared by the page and API adapters.
+export function middlewareGuard({ files, resolver, graph }: Pick<ExtractContext, 'files' | 'resolver' | 'graph'>): { guard: string; declaration: Node | undefined; covers: (path: string) => boolean } | undefined {
+  const file = files.find((path) => /^(src\/)?(middleware|proxy)\.(ts|js)$/.test(path));
+  if (file === undefined) return undefined;
+  const source = resolver.file(file);
+  const declaration = source.getFunction('middleware') ?? source.getVariableDeclaration('middleware') ?? source.getFunction('proxy') ?? source.getVariableDeclaration('proxy') ?? source.getDefaultExportSymbol()?.getDeclarations()[0];
+  const guard = graph.add(`guard:${file}`, { kind: 'guard', name: 'middleware', ...(declaration === undefined ? { file, line: 1 } : resolver.where(declaration)), attrs: { name: 'middleware' } });
+  const config = source.getVariableDeclaration('config')?.getInitializer();
+  const options = config === undefined ? undefined : resolver.values(config).find((value) => Node.isObjectLiteralExpression(value));
+  const matcher = Node.isObjectLiteralExpression(options) ? options.getProperty('matcher') : undefined;
+  const listed = Node.isPropertyAssignment(matcher) ? resolver.values(matcher.getInitializerOrThrow()) : [];
+  const patterns = listed.flatMap((value) => (Node.isArrayLiteralExpression(value) ? value.getElements() : [value])).flatMap((value) => resolver.string(value) ?? []);
+  const scopes = [source, ...source.getDescendantsOfKind(SyntaxKind.Identifier).flatMap((identifier) => {
+    const definition = identifier.getDefinitionNodes()[0];
+    return definition !== undefined && inProject(definition) && definition.getSourceFile() !== source ? [definition] : [];
+  })];
+  // A prefix whose branch lets the request through (if (pathname.startsWith('/api/auth')) return NextResponse.next())
+  // is left out; any other prefix it checks is where it guards.
+  const checks = scopes.flatMap((scope) => scope.getDescendantsOfKind(SyntaxKind.CallExpression)).flatMap((call) => {
+    const callee = call.getExpression();
+    const [arg] = call.getArguments();
+    if (!(Node.isPropertyAccessExpression(callee) && callee.getName() === 'startsWith' && Node.isStringLiteral(arg) && arg.getLiteralValue().startsWith('/'))) return [];
+    const branch = call.getFirstAncestorByKind(SyntaxKind.IfStatement)?.getThenStatement().getText() ?? '';
+    return [{ prefix: arg.getLiteralValue(), passes: /NextResponse\.next\(|status:\s*200\b/.test(branch) }];
+  });
+  const under = (sample: string, prefix: string) => sample === prefix || sample.startsWith(`${prefix.replace(/\/$/, '')}/`);
+  const included = checks.filter((check) => !check.passes).map((check) => check.prefix);
+  const excluded = checks.filter((check) => check.passes).map((check) => check.prefix);
+  const covers = (path: string) => {
+    const sample = samplePath(path);
+    const matched = patterns.length === 0 || patterns.some((pattern) => matcherRegex(pattern).test(sample));
+    const scoped = included.length === 0 || included.some((prefix) => under(sample, prefix));
+    return matched && scoped && !excluded.some((prefix) => under(sample, prefix));
+  };
+  return { guard, declaration, covers };
+}
+
 function extract({ files, facts, resolver, graph }: ExtractContext): Unrecognised[] {
   const notes: Unrecognised[] = [];
   const appDir = files.some((file) => file.startsWith('app/')) ? 'app' : 'src/app';
@@ -438,34 +476,9 @@ function extract({ files, facts, resolver, graph }: ExtractContext): Unrecognise
     }
   }
 
-  // middleware.ts guards the pages its matcher selects. When its logic (or a config it uses) checks
-  // pathname.startsWith('/x'), only pages under those prefixes count as guarded.
-  const middlewareFile = files.find((file) => /^(src\/)?middleware\.(ts|js)$/.test(file));
-  if (middlewareFile !== undefined) {
-    const source = resolver.file(middlewareFile);
-    const declaration = source.getFunction('middleware') ?? source.getVariableDeclaration('middleware') ?? source.getDefaultExportSymbol()?.getDeclarations()[0];
-    const guard = graph.add(`guard:${middlewareFile}`, { kind: 'guard', name: 'middleware', ...(declaration === undefined ? { file: middlewareFile, line: 1 } : resolver.where(declaration)), attrs: { name: 'middleware' } });
-    const config = source.getVariableDeclaration('config')?.getInitializer();
-    const options = config === undefined ? undefined : resolver.values(config).find((value) => Node.isObjectLiteralExpression(value));
-    const matcher = Node.isObjectLiteralExpression(options) ? options.getProperty('matcher') : undefined;
-    const listed = Node.isPropertyAssignment(matcher) ? resolver.values(matcher.getInitializerOrThrow()) : [];
-    const patterns = listed.flatMap((value) => (Node.isArrayLiteralExpression(value) ? value.getElements() : [value])).flatMap((value) => resolver.string(value) ?? []);
-    const scopes = [source, ...source.getDescendantsOfKind(SyntaxKind.Identifier).flatMap((identifier) => {
-      const definition = identifier.getDefinitionNodes()[0];
-      return definition !== undefined && inProject(definition) && definition.getSourceFile() !== source ? [definition] : [];
-    })];
-    const prefixes = scopes.flatMap((scope) => scope.getDescendantsOfKind(SyntaxKind.CallExpression)).flatMap((call) => {
-      const callee = call.getExpression();
-      const [arg] = call.getArguments();
-      return Node.isPropertyAccessExpression(callee) && callee.getName() === 'startsWith' && Node.isStringLiteral(arg) && arg.getLiteralValue().startsWith('/') ? [arg.getLiteralValue()] : [];
-    });
-    for (const page of pages) {
-      const sample = samplePath(page.path);
-      const matched = patterns.length === 0 || patterns.some((pattern) => matcherRegex(pattern).test(sample));
-      const scoped = prefixes.length === 0 || prefixes.some((prefix) => sample === prefix || sample.startsWith(`${prefix.replace(/\/$/, '')}/`));
-      if (matched && scoped) graph.edge(page.key, guard, 'guarded-by');
-    }
-  }
+  // middleware.ts (proxy.ts in Next.js 16) guards the pages its matcher selects.
+  const middleware = middlewareGuard({ files, resolver, graph });
+  for (const page of pages) if (middleware?.covers(page.path)) graph.edge(page.key, middleware.guard, 'guarded-by');
 
   // Every API call site the rules found should be reachable from some page; the rest are listed.
   for (const [file, { facts: list }] of facts) {
@@ -485,7 +498,7 @@ export const nextAppAdapter: FrameworkAdapter = {
   id: 'nextjs-app',
   role: 'web',
   // Only the App Router is supported; a Pages Router app has no app/ folder and is reported, not guessed at.
-  detection: { dependency: 'next', testedMajor: 14, needsOneOf: ['app', 'src/app'] },
+  detection: { dependency: 'next', testedMajors: [14, 15, 16], needsOneOf: ['app', 'src/app'] },
   rules: RULES.patterns,
   suspects: RULES.suspects,
   extract,

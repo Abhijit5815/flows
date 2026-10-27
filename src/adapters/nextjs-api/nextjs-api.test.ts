@@ -49,3 +49,29 @@ test('each exported method of a route file is a route, with its responses and th
   assert.deepEqual(details('POST /api/items'), ['check 201', 'body itemSchema { name: string min(1) }', 'error 401 from the handler: Unauthorized']);
   assert.deepEqual(details('DELETE /api/items/:id'), ['check 204'], "a schema for the route's params is not a body");
 });
+
+// proxy.ts (Next.js 16's middleware) guards the API routes its matcher selects, minus the prefixes it lets through,
+// and a response built by the app's own helper counts as the handler's.
+test('the proxy guards API routes but not the ones it lets through; helper responses count', async () => {
+  const dir = join(tmp, 'guarded');
+  const write = (file: string, text: string) => {
+    mkdirSync(join(dir, file, '..'), { recursive: true });
+    writeFileSync(join(dir, file), text);
+  };
+  write('package.json', JSON.stringify({ dependencies: { next: '^16.0.0' } }));
+  write('tsconfig.json', JSON.stringify({ compilerOptions: { strict: true } }));
+  write(
+    'proxy.ts',
+    "import { NextResponse, type NextRequest } from 'next/server';\nexport function proxy(request: NextRequest) {\n  if (request.nextUrl.pathname.startsWith('/api/auth')) return NextResponse.next();\n  if (!request.cookies.has('session')) return NextResponse.json({ error: 'Sign in first' }, { status: 401 });\n  return NextResponse.next();\n}\nexport const config = { matcher: ['/api/:path*'] };\n",
+  );
+  write('lib/errors.ts', "export const forbidden = () => Response.json({ error: 'Not yours' }, { status: 403 });\n");
+  write('app/api/notes/route.ts', "import { forbidden } from '../../../lib/errors';\nexport function GET(request: Request) {\n  if (!request.headers.has('x-owner')) return forbidden();\n  return Response.json({ notes: [] });\n}\n");
+  write('app/api/auth/session/route.ts', 'export function GET() {\n  return Response.json({ user: null });\n}\n');
+  const project = tempProject(join(tmp, 'guarded-project'));
+  const { graph } = await scanRepo(project, addRepo(project, dir, 'api').config.repos[0]);
+  assert.ok(graph);
+  const guards = (path: string) => graph.edges.filter((edge) => edge.from === `api:route:GET ${path}` && edge.kind === 'guarded-by').length;
+  assert.deepEqual([guards('/api/notes'), guards('/api/auth/session')], [1, 0]);
+  const details = candidates(graph).flows.find((flow) => flow.name === 'GET /api/notes')?.steps.flatMap(stepDetails);
+  assert.deepEqual(details, ['error 401 from middleware: Sign in first', 'error 403 from the handler: Not yours']);
+});

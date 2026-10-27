@@ -47,9 +47,9 @@ test('a Next.js app without an app/ folder (Pages Router) is not taken for the A
 });
 
 test('a version the adapter was not built on is used, with a warning', () => {
-  const stack = stackOf(app('express5', { express: '^5.0.1' }), { path: '.', role: 'api' });
+  const stack = stackOf(app('express6', { express: '^6.0.0' }), { path: '.', role: 'api' });
   assert.equal(stack.framework, 'express');
-  assert.match(stack.warnings.join('\n'), /tested on express 4\.x; this repo has "\^5\.0\.1"/);
+  assert.match(stack.warnings.join('\n'), /tested on express 4\.x, 5\.x; this repo has "\^6\.0\.0"/);
 });
 
 test('the right role only: an Express dependency does not make a web repo an Express app', () => {
@@ -71,7 +71,7 @@ test('a framework pinned in the config wins over detection, and must exist and f
 });
 
 test('two adapters of one role matching is reported, not guessed', () => {
-  const twin = (id: string): FrameworkAdapter => ({ id, role: 'api', detection: { dependency: 'express', testedMajor: 4 }, rules: [], suspects: [], extract: () => [] });
+  const twin = (id: string): FrameworkAdapter => ({ id, role: 'api', detection: { dependency: 'express', testedMajors: [4] }, rules: [], suspects: [], extract: () => [] });
   const stack = stackOf(app('ambiguous', { express: '^4.19.2' }), { path: '.', role: 'api' }, [twin('a'), twin('b')]);
   assert.equal(stack.framework, undefined);
   assert.match(stack.warnings.join('\n'), /a and b all match/);

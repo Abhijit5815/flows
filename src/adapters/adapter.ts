@@ -6,7 +6,7 @@ import type { Resolver } from '../ingest/resolve.ts';
 // What stack detection looks for: a package.json dependency, plus any folder the adapter needs.
 export type DetectionRule = {
   dependency: string;
-  testedMajor: number; // the major version the adapter is built and tested on; others get a warning
+  testedMajors: readonly number[]; // the major versions the adapter is checked on, on real apps; others get a warning
   needsOneOf?: readonly string[];
 };
 

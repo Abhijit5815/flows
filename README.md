@@ -8,9 +8,9 @@ Flows finds the **user (UI) flows and API flows** of a web app from two inputs:
 You review the flows on a local page, with the code (and screenshots, requests) behind every step, then export them
 as JSON for a test tool. Flows itself writes and runs no tests.
 
-The first supported stack is Next.js 14 (App Router) for the web app and Express 4 with TypeScript for the API. A Next.js
-app's own API routes (`app/**/route.ts`) are read too when its folder is also registered as an API:
-`flows repo add web --role api`.
+Supported: Next.js 14, 15 and 16 (App Router) for the web app; for the API, Express 4 and 5 (TypeScript or JavaScript,
+including routing-controllers' decorator controllers), NestJS, and a Next.js app's own API routes (`app/**/route.ts`),
+read when its folder is also registered as an API: `flows repo add web --role api`.
 
 ## Install
 

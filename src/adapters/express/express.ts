@@ -5,6 +5,8 @@ import { z } from 'zod';
 import { PatternRuleSchema } from '../../ingest/match.ts';
 import { holderOf, importOf, inProject, isFunctionLike, keyOf, NO_ENV, qualifiedName, type Env } from '../../ingest/resolve.ts';
 import type { ExtractContext, FrameworkAdapter, Unrecognised } from '../adapter.ts';
+import { decoratorControllers } from '../decorators.ts';
+import { joinPath } from '../paths.ts';
 import { parsedSchemas, schemaNode } from '../schemas.ts';
 
 // The rules are data (rules.json); this file follows what they match: routers, mounts, routes, handlers,
@@ -26,11 +28,11 @@ type Uses = { node: Node; env: Env };
 type Registration = { routers: string[]; method: string; path: string; handlers: Node[]; env: Env; file: string; line: number; pos: number };
 type Mount = { parent: string; prefix: string; children: string[]; middleware: Uses[]; file: string; pos: number };
 
-// Express joins mount prefixes and route paths; "/" adds nothing and there is no trailing slash.
-export function joinPath(...parts: string[]): string {
-  const joined = `/${parts.join('/')}`.replace(/\/{2,}/g, '/');
-  return joined.length > 1 ? joined.replace(/\/$/, '') : joined;
-}
+export { joinPath } from '../paths.ts';
+
+// Express 5's path syntax in the form the rest of Flows matches paths with: an optional group {/:id} is /:id?, a named
+// wildcard /*splat is /*.
+export const express5Path = (path: string): string => path.replace(/\{(\/:\w+)\}/g, '$1?').replace(/\/\*\w+/g, '/*');
 
 // express() makes an app and Router() / express.Router() a router; recognised by the import, not the name.
 function routerKind(node: Node): 'app' | 'router' | undefined {
@@ -137,7 +139,7 @@ function extract({ facts, files, read, resolver, graph, guards }: ExtractContext
       notes.push({ ...where, reason: `route path ${args[0].getText()} is not a fixed string` });
       return;
     }
-    registrations.push({ routers, method: method === 'all' ? 'ALL' : method.toUpperCase(), path, handlers: args.slice(1), env, ...where, pos: name.getStart() });
+    registrations.push({ routers, method: method === 'all' ? 'ALL' : method.toUpperCase(), path: express5Path(path), handlers: args.slice(1), env, ...where, pos: name.getStart() });
   };
 
   for (const [file, { facts: list }] of facts) {
@@ -403,14 +405,8 @@ function extract({ facts, files, read, resolver, graph, guards }: ExtractContext
     for (const schema of handled.get(handler) ?? []) addSchema(route, schema, NO_ENV);
   };
 
-  // Decorator controllers (routing-controllers' @JsonController('/users') with @Get('/:id')) are a framework of their
-  // own; say so where they are rather than finding nothing.
-  for (const file of files.filter((path) => /\.[cm]?[jt]sx?$/.test(path))) {
-    const text = read(file);
-    if (!/from ['"]routing-controllers['"]/.test(text)) continue;
-    const line = text.split('\n').findIndex((row) => /@(Json)?Controller\(/.test(row));
-    if (line >= 0) notes.push({ file, line: line + 1, reason: 'a routing-controllers decorator controller: Flows does not read these routes yet' });
-  }
+  // Decorator controllers (routing-controllers' @JsonController('/users') with @Get('/:id')) sit on Express too.
+  if (files.some((path) => /\.[cm]?tsx?$/.test(path) && /from ['"]routing-controllers['"]/.test(read(path)))) notes.push(...decoratorControllers({ files, read, resolver, graph }));
 
   for (const registration of registrations) {
     for (const router of registration.routers) {
@@ -433,7 +429,7 @@ function extract({ facts, files, read, resolver, graph, guards }: ExtractContext
 export const expressAdapter: FrameworkAdapter = {
   id: 'express',
   role: 'api',
-  detection: { dependency: 'express', testedMajor: 4 },
+  detection: { dependency: 'express', testedMajors: [4, 5] },
   rules: RULES.patterns,
   suspects: RULES.suspects,
   extract,

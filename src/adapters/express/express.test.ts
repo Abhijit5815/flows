@@ -152,7 +152,7 @@ test('guards built by an auth library are guards, with the status the library re
 
 // From the bug-hunting pass on unseen apps (node-express-boilerplate, express-ts-api-boilerplate, express-typescript,
 // express-typescript-api, w3tecch's boilerplate): CommonJS, wrapped handlers, thrown errors, chained route calls, test
-// files, passport.initialize(), CORS preflight and decorator controllers, in one small app.
+// files, passport.initialize(), CORS preflight and a decorator controller, in one small app.
 test('patterns from unseen apps: wrapped handlers, thrown errors, chained routes, and what is not a route or a guard', async () => {
   const dir = join(tmp, 'hunt-app');
   const write = (file: string, text: string) => {
@@ -173,12 +173,11 @@ test('patterns from unseen apps: wrapped handlers, thrown errors, chained routes
   write('src/PetController.ts', "import { Get, JsonController } from 'routing-controllers';\n\n@JsonController('/pets')\nexport class PetController {\n  @Get('/')\n  list() {\n    return [];\n  }\n}\n");
 
   const project = tempProject(join(tmp, 'hunt'));
-  const { graph, coverage } = await scanRepo(project, addRepo(project, dir, 'api').config.repos[0]);
+  const { graph } = await scanRepo(project, addRepo(project, dir, 'api').config.repos[0]);
   assert.ok(graph);
   const routes = graph.nodes.flatMap((node) => (node.kind === 'route' ? [`${node.attrs.method} ${node.attrs.path}`] : [])).sort();
-  assert.deepEqual(routes, ['GET /v1/health', 'GET /v1/users/:id', 'OPTIONS /*', 'POST /v1/users'], 'the chained .post is found; the test file adds nothing');
+  assert.deepEqual(routes, ['GET /pets', 'GET /v1/health', 'GET /v1/users/:id', 'OPTIONS /*', 'POST /v1/users'], 'the chained .post and the decorator controller are found; the test file adds nothing');
   assert.deepEqual(graph.edges.filter((edge) => edge.kind === 'guarded-by'), [], 'passport.initialize() rejects nothing');
-  assert.ok(coverage.unrecognised.some((note) => note.file === 'src/PetController.ts' && /routing-controllers/.test(note.reason)));
 
   const found = candidates(graph);
   const errors = (route: string) =>

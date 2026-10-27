@@ -84,11 +84,33 @@ export const parsedSchemas = (fn: Node): Node[] =>
     return Node.isPropertyAccessExpression(callee) && /^(safe)?[pP]arse(Async)?$/.test(callee.getName()) && isBody(call.getArguments()[0]) ? [callee.getExpression()] : [];
   });
 
+// The fields of a class-validator DTO: each decorated property, its own and its base classes', with its type as
+// written and its decorators as rules (IsEmail(), MinLength(8)); @IsOptional() or "?" makes it optional.
+export function dtoFields(declaration: Node, depth = 0): Field[] | undefined {
+  if (!Node.isClassDeclaration(declaration) || depth > 4) return undefined;
+  const base = declaration.getBaseClass();
+  const inherited = base === undefined ? [] : (dtoFields(base, depth + 1) ?? []);
+  const own = declaration.getProperties().flatMap((property) => {
+    // Validation rules only: @ApiProperty (docs) or @Transform says nothing about what the body must hold.
+    const validating = property.getDecorators().filter((decorator) => {
+      const call = decorator.getCallExpression();
+      const id = call === undefined ? decorator.getExpression() : call.getExpression();
+      return Node.isIdentifier(id) && importOf(id)?.module === 'class-validator';
+    });
+    const decorators = validating.map((decorator) => decorator.getText().slice(1).replace(/\s+/g, ' '));
+    if (decorators.length === 0) return [];
+    const optional = property.hasQuestionToken() || decorators.some((rule) => /^IsOptional\b/.test(rule));
+    return [{ name: property.getName(), type: property.getTypeNode()?.getText() ?? 'any', required: !optional, rules: decorators.filter((rule) => !/^IsOptional\b/.test(rule)) }];
+  });
+  const names = new Set(own.map((field) => field.name));
+  return [...inherited.filter((field) => !names.has(field.name)), ...own];
+}
+
 // The request-schema node for a schema a route validates, or undefined when the expression is not a schema.
 export function schemaNode(resolver: Resolver, graph: GraphBuilder, expression: Node, env?: Env): string | undefined {
   const declaration = resolver.declaration(expression, env);
   if (declaration === undefined || !isSchema(declaration)) return undefined;
   const name = qualifiedName(declaration) ?? declaration.getText();
-  const fields = zodFields(declaration);
+  const fields = zodFields(declaration) ?? dtoFields(declaration);
   return graph.add(keyOf(declaration), { kind: 'request-schema', name, ...resolver.where(declaration), attrs: { name, ...(fields === undefined || fields.length === 0 ? {} : { fields }) } });
 }

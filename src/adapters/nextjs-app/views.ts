@@ -20,7 +20,7 @@ export function uiViews(graph: Graph) {
       }
     }
     const owners = [root, ...components];
-    const forms = unique(owners.flatMap((owner) => out(owner.id, 'contains')));
+    const forms = unique(owners.flatMap((owner) => out(owner.id, 'contains'))).filter((node) => node.kind === 'form'); // links are in the graph too, listed apart
     const actions = unique([...forms.flatMap((form) => out(form.id, 'submits')), ...owners.flatMap((owner) => out(owner.id, 'triggers'))]);
     return {
       components: components.map(label).sort(),

@@ -5,3 +5,5 @@ export const ROLE_NOT_EXPLORED = 'role not explored';
 export const STALE = 'stale';
 // A UI flow that calls the API at a path no route of the project's API repos answers.
 export const NO_ROUTE = 'no backend route';
+// A flow that crosses pages: open one, follow a link or submit a form, land on the next, and carry on.
+export const JOURNEY = 'journey';

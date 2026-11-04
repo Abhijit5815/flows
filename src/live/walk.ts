@@ -3,7 +3,7 @@ import { LoginNameSchema, type Project, type Repo } from '../config/project.ts';
 import { refreshFlows, type EngineDeps } from '../engine/engine.ts';
 import { loadFlows, type FlowSet } from '../engine/store.ts';
 import { loadGraph } from '../graph/store.ts';
-import { LiveError } from '../shared/errors.ts';
+import { ConfigError, LiveError } from '../shared/errors.ts';
 import { explore } from './explorer.ts';
 import { inspect, type Walk } from './inspector.ts';
 import { guidedSteps, knowing } from './know.ts';
@@ -84,9 +84,17 @@ export async function exploreProject(
 ): Promise<{ run: Run; sets: { repo: Repo; set: FlowSet }[]; noRepoScanned: boolean }> {
   const { url, as: name } = request;
   if (name !== undefined && !LoginNameSchema.safeParse(name).success) throw new LiveError(`"${name}" is not a login name`);
-  const credentials = name === undefined ? undefined : envCredentials(project.config.explorer, name);
   const saved = name === undefined ? undefined : sessionFile(project, name);
-  const storageState = credentials === undefined && saved !== undefined && existsSync(saved) ? saved : undefined;
+  // Env credentials log in again; without them (the variables are not set), a session saved earlier carries on.
+  let credentials: ReturnType<typeof envCredentials>;
+  try {
+    credentials = name === undefined ? undefined : envCredentials(project.config.explorer, name);
+  } catch (error) {
+    if (!(error instanceof ConfigError) || saved === undefined || !existsSync(saved)) throw error;
+    credentials = undefined;
+  }
+  // A saved session is the way past a gate in front of the app (Cloudflare Access, a VPN login); env credentials then log in to the app itself.
+  const storageState = saved !== undefined && existsSync(saved) ? saved : undefined;
   if (name !== undefined && credentials === undefined && storageState === undefined) {
     throw new LiveError(`no saved session or env credentials for "${name}": run "flows login ${url} --as ${name}", or set explorer.logins.${name} in the config`);
   }

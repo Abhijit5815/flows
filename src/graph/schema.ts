@@ -32,6 +32,8 @@ const WebNodeSchema = z.discriminatedUnion('kind', [
   // redirects: where it sends the browser (redirect('/account')); messages: the strings it returns for the form to show.
   node('action', z.object({ name: z.string().min(1), server: z.boolean(), redirects: z.array(z.string().startsWith('/')).optional(), messages: z.array(z.string().min(1)).optional(), text: z.string().min(1).optional(), library: z.string().min(1).optional() })),
   node('guard', Named.extend({ carries: z.object({ header: z.string().optional(), scheme: z.string().optional(), cookie: z.string().optional() }).optional() })),
+  // A link to a page of the app (<Link href="/auth">); text: what it says, when that is fixed text.
+  node('link', z.object({ href: z.string().startsWith('/'), text: z.string().min(1).optional() })),
   // Not linked in the graph; the flow engine links it to the route that answers it. The path may be a full URL (another service).
   node('api-call', z.object({ method: MethodSchema, path: z.string().min(1) })),
 ]);
@@ -51,7 +53,7 @@ export const GraphSchema = z
     GraphBase.extend({
       role: z.literal('web'),
       nodes: z.array(WebNodeSchema),
-      edges: z.array(edge(['wrapped-by', 'renders', 'contains', 'submits', 'triggers', 'calls', 'guarded-by'])),
+      edges: z.array(edge(['wrapped-by', 'renders', 'contains', 'submits', 'triggers', 'calls', 'guarded-by', 'navigates'])),
     }),
   ])
   .superRefine((graph, ctx) => {

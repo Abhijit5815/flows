@@ -32,6 +32,7 @@ export type ExploreInput = {
 export type ExploreDeps = { decider: Decider; llm: OptionalLlm; config: ExplorerConfig; runDir(id: string): string; log(line: string): void };
 
 const FIRST_DWELL = 1500; // the first load of a page is watched this long, so polling shows (three repeats)
+const EMPTY_WAIT = 30_000;
 const QUIET = 500; // a page has settled when no request started for this long
 const MAX_SETTLE = 4000;
 const STEP_TIMEOUT = 5000;
@@ -77,7 +78,7 @@ export async function explore(input: ExploreInput, deps: ExploreDeps): Promise<R
   const notes: string[] = [];
   try {
     const context = await newContext(browser, input.storageState);
-    const guard = await guardReadOnly(context);
+    const guard = await guardReadOnly(context, deps.config.safe_requests);
     const recorder = new Recorder(context, siteOf(start.hostname), guard);
     const page = await context.newPage();
     context.on('page', (other) => {
@@ -93,6 +94,8 @@ export async function explore(input: ExploreInput, deps: ExploreDeps): Promise<R
         if (Date.now() - from >= dwell && Date.now() - Math.max(from, recorder.lastRequestAt) >= QUIET) break;
         await sleep(100);
       }
+      // A slow app can be quiet before it has drawn anything: a page with nothing to click gets a few seconds more.
+      await page.locator('a[href], button, input').first().waitFor({ state: 'visible', timeout: EMPTY_WAIT }).catch(() => undefined);
     };
     let visits = 0;
     const where = (state: number | null, action: number | null) => Object.assign(recorder.where, { state, action });

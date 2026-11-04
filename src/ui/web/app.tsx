@@ -88,7 +88,7 @@ function App() {
           {filter('category', 'Category', project.categories.map((category) => [category.id, category.name]))}
           {filter('status', 'Status', STATUSES.map((status) => [status, status]))}
           {filter('repo', 'Repo', project.repos.map((repo) => [repoKey(repo), `${repo.role} ${repo.path}`]))}
-          {filter('kind', 'Kind', [['ui', 'UI'], ['api', 'API']])}
+          {filter('kind', 'Kind', [['ui', 'UI'], ['api', 'API'], ['journey', 'Journeys (across pages)']])}
           {filter('qa', 'AI check', [['ready', 'Ready'], ['needs-work', 'Needs work'], ['not-testable', 'Not testable'], ['none', 'Not checked']])}
           {filter('change', 'Since last scan', [['pending', 'New or updated'], ['new', 'New'], ['changed', 'Updated']])}
         </div>

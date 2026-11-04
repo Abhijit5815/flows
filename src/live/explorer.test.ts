@@ -37,7 +37,7 @@ const decider: Decider = {
     return answer('safe', 0.95);
   },
 };
-const config: ExplorerConfig = { max_pages: 30, max_depth: 3, min_safe_prob: 0.8, logins: {} };
+const config: ExplorerConfig = { max_pages: 30, max_depth: 3, min_safe_prob: 0.8, logins: {}, safe_requests: [] };
 const deps = { decider, llm: new OptionalLlm(undefined, join(tmp, 'llm.json'), () => undefined), config, runDir: (id: string) => join(tmp, id), log: () => undefined };
 const input = (overrides: Partial<ExploreInput> = {}): ExploreInput => ({
   url: site.url,

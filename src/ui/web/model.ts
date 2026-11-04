@@ -3,7 +3,8 @@ import type { FlowSet } from '../../engine/store.ts';
 import type { Flow } from '../../model/flow.ts';
 import type { ProjectView, RepoView } from '../api.ts';
 
-export { NO_ROUTE, NOT_OBSERVED, ROLE_NOT_EXPLORED, STALE } from '../../model/tags.ts';
+export { JOURNEY, NO_ROUTE, NOT_OBSERVED, ROLE_NOT_EXPLORED, STALE } from '../../model/tags.ts';
+import { JOURNEY } from '../../model/tags.ts';
 
 // An observed step whose element has only an XPath to find it by (src/live/snapshot.ts): "no stable selector".
 export const unstable = (step: Flow['steps'][number]): boolean => step.evidence.some((evidence) => evidence.type === 'dom' && / xpath:/.test(evidence.ref));
@@ -38,7 +39,7 @@ export const matches = (item: Item, filters: Filters): boolean =>
   (filters.category === ANY || item.flow.category === filters.category) &&
   (filters.status === ANY || item.flow.status === filters.status) &&
   (filters.repo === ANY || repoKey(item.repo) === filters.repo) &&
-  (filters.kind === ANY || item.flow.kind === filters.kind) &&
+  (filters.kind === ANY || (filters.kind === JOURNEY ? item.flow.tags.includes(JOURNEY) : item.flow.kind === filters.kind)) &&
   (filters.qa === ANY || (filters.qa === 'none' ? item.qa === undefined : item.qa?.verdict === filters.qa)) &&
   (filters.change === ANY || (filters.change === 'pending' ? item.change !== undefined : item.change === filters.change));
 

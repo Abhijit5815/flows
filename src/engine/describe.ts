@@ -15,6 +15,8 @@ export function label(node: GraphNode): string {
     case 'page':
     case 'layout':
       return node.attrs.path;
+    case 'link':
+      return node.attrs.href;
     case 'route':
     case 'api-call':
       return `${node.attrs.method} ${node.attrs.path}`;
@@ -145,6 +147,7 @@ export function claimOf(kind: Step['kind'], nodes: readonly GraphNode[]): string
     const press = text === undefined ? `submit the ${subject(first) || 'form'}${subject(first) === '' ? '' : ' form'}` : `press ${text}`;
     return first.attrs.fields.length > 0 ? `Fill in ${list(first.attrs.fields)}, then ${press}` : capital(press);
   }
+  if (kind === 'ui' && first.kind === 'link' && second?.kind === 'page') return `Click ${first.attrs.text ?? 'the link'} to go to ${label(second)}`;
   if (kind === 'ui' && first.kind === 'action' && second !== undefined && OWNERS.has(second.kind)) {
     return first.attrs.text === undefined ? `Click in ${subject(second) || 'the page'} to ${actName([first, second]) ?? 'act'}` : `Press ${first.attrs.text}`;
   }

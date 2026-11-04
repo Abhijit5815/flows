@@ -3,7 +3,7 @@ import { useMemo, useState, type CSSProperties } from 'react';
 import type { Category } from '../../model/category.ts';
 import { ChangeBadge } from './changes.tsx';
 import { QaBadge } from './qa.tsx';
-import { NO_ROUTE, NOT_OBSERVED, ROLE_NOT_EXPLORED, STALE, unstable, whereOf, type Item } from './model.ts';
+import { JOURNEY, NO_ROUTE, NOT_OBSERVED, ROLE_NOT_EXPLORED, STALE, unstable, whereOf, type Item } from './model.ts';
 
 // PLAN.md Phase 5: nodes are steps, lanes are categories. Each flow is a row in its category's lane: a header
 // node, then its steps left to right. Positions are computed here; nothing is dragged.
@@ -49,6 +49,7 @@ function flowBadges(item: Item): string[] {
   const { flow } = item;
   return [
     ...(item.change === undefined ? [] : [item.change]),
+    ...(flow.tags.includes(JOURNEY) ? ['journey'] : []),
     ...(item.qa === undefined ? [] : [item.qa.verdict]),
     flow.status,
     flow.kind.toUpperCase(),
@@ -73,6 +74,7 @@ function FlowNode({ data }: NodeProps<Node<FlowData, 'flow'>>) {
     <div className={`flow-node${data.selected ? ' is-selected' : ''}${flow.enabled ? '' : ' is-off'}`}>
       <div className="flow-badges">
         {data.item.change === undefined ? null : <ChangeBadge item={data.item} />}
+        {flow.tags.includes(JOURNEY) ? <span className="badge new">journey</span> : null}
         {data.item.qa === undefined ? null : <QaBadge qa={data.item.qa} />}
         <span className={`pill status-${flow.status}`}>{flow.status}</span>
         <span className="badge">{flow.kind.toUpperCase()}</span>

@@ -25,6 +25,7 @@ import { gitState } from '../ingest/gitstate.ts';
 import { now } from '../rules/learned.ts';
 import { reachability, unreachableBecause } from './reach.ts';
 import { loadFlows, saveFlows, type FlowSet } from './store.ts';
+import { journeys } from './journeys.ts';
 import { carryQa } from './qa.ts';
 import { carrySince, sinceScan } from './since.ts';
 import { markStale } from './stale.ts';
@@ -62,7 +63,8 @@ export async function buildFlows(graph: Graph, human: HumanInput, deps: EngineDe
   // A folder registered as both web and api shares one .flows/: each role takes only the flows of its own kind.
   const added = human.edits.added.filter((flow) => (flow.kind === 'ui') === (graph.role === 'web'));
 
-  const found = candidates(graph);
+  const base = candidates(graph);
+  const found = { ...base, flows: [...base.flows, ...journeys(graph, nodes)] };
   const generated = addLoginSubflows(found.flows, nodes);
   // A person's steps replace the generated ones, and steps they switched off stay off.
   const withSteps = (flow: Flow): Flow => {

@@ -101,6 +101,8 @@ export const ProjectConfigSchema = z.object({
       max_depth: z.int().min(0).default(3),
       min_safe_prob: z.number().min(0).max(1).default(0.8),
       logins: z.record(LoginNameSchema, LoginSchema).default({}),
+      // Requests the app sends on its own that change no data, let through the read-only guard: "POST /api/auth/refresh".
+      safe_requests: z.array(z.string().regex(/^(POST|PUT|PATCH|DELETE) \/\S*$/, 'write it as "POST /path"')).default([]),
     })
     .prefault({}),
   storage_dir: z.string().min(1).optional(),

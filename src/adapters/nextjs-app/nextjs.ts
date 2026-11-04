@@ -389,6 +389,8 @@ function extract({ files, facts, resolver, graph }: ExtractContext): Unrecognise
   // A form component that takes what it runs as a prop (<Form action={register}>): a form of its own on each page that
   // uses it, with the action that page passes, so two pages sharing it are two flows.
   const propForms = new Map<Node, { props: string[]; fields: string[]; ids: string[]; submit?: string }[]>();
+  // Every link to a page of the app, to be joined to the page it opens once all pages are known.
+  const links: { key: string; href: string }[] = [];
 
   // Walks one page, layout or component: what it renders, its forms and click actions, and what it fetches.
   const visited = new Set<string>();
@@ -403,6 +405,17 @@ function extract({ files, facts, resolver, graph }: ExtractContext): Unrecognise
     let forms = 0;
     for (const element of jsxElements(fn)) {
       const tag = tagOf(element).getText();
+      if ((tag === 'Link' || tag === 'a') && (Node.isJsxOpeningElement(element) || Node.isJsxSelfClosingElement(element))) {
+        const target = attribute(element, 'href');
+        const href = target === undefined ? undefined : resolver.string(target)?.split(/[?#]/)[0];
+        if (href !== undefined && /^\/[\w\-./[\]]*$/.test(href)) {
+          const said = Node.isJsxOpeningElement(element) ? fixedText(element.getParentOrThrow())?.replace(/\s+/g, ' ').trim() : undefined;
+          const text = said !== undefined && said.length > 0 && said.length <= 60 ? said : undefined;
+          const link = graph.add(`${keyOf(element)}#link`, { kind: 'link', name: href, ...resolver.where(element), attrs: { href, ...(text === undefined ? {} : { text }) } });
+          graph.edge(key, link, 'contains');
+          links.push({ key: link, href });
+        }
+      }
       const onClick = attribute(element, 'onClick');
       for (const target of onClick === undefined ? [] : actionTargets(onClick)) {
         handlers.add(target);
@@ -522,6 +535,17 @@ function extract({ files, facts, resolver, graph }: ExtractContext): Unrecognise
     for (const layout of layouts) {
       if (layout.folder.every((segment, i) => page.folder[i] === segment)) graph.edge(page.key, layout.key, 'wrapped-by');
     }
+  }
+
+  // A link opens the page whose path it names; a [param] segment of a page matches any one segment.
+  const opens = (pagePath: string, href: string): boolean => {
+    const want = pagePath.split('/');
+    const got = href.split('/').filter((part, i, all) => part !== '' || i === 0 || i < all.length - 1);
+    return want.length === got.length && want.every((part, i) => part === got[i] || /^\[[^\]]+\]$/.test(part));
+  };
+  for (const link of links) {
+    const target = pages.find((page) => opens(page.path, link.href.length > 1 ? link.href.replace(/\/$/, '') : link.href));
+    if (target !== undefined) graph.edge(link.key, target.key, 'navigates');
   }
 
   // middleware.ts (proxy.ts in Next.js 16) guards the pages its matcher selects.

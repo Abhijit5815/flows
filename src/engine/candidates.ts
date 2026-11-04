@@ -197,7 +197,7 @@ function webCandidates(graph: Graph, nodes: Lookup): Candidates {
   const built = new Set<string>();
   for (const page of pages) {
     for (const owner of along([page, ...nodes.out(page.id, 'wrapped-by')], 'renders', nodes)) {
-      for (const form of nodes.out(owner.id, 'contains')) {
+      for (const form of nodes.out(owner.id, 'contains').filter((own) => own.kind === 'form')) { // links are contained too, but they are not forms
         if (built.has(form.id)) continue;
         built.add(form.id);
         const actions = nodes.out(form.id, 'submits');

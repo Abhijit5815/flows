@@ -38,6 +38,7 @@ export function envCredentials(config: ExplorerConfig, name: string): Credential
   return { user: value(login.user_env, 'user_env'), password: value(login.password_env, 'password_env'), path: login.path };
 }
 
+const LOGIN_WAIT_MS = 30_000;
 const visiblePassword = (page: Page) => page.locator('input[type=password]').visible().first();
 
 // Types the env credentials into the form that has the password field, on `path` or the start page (opening a
@@ -85,6 +86,8 @@ export async function loginWithEnv(page: Page, guard: Guard, credentials: Creden
     else await page.locator('[data-flows-login=password]').press('Enter');
     await settle();
   });
+  // A slow server answers a login after the page has settled: give the password field time to go before judging it.
+  await visiblePassword(page).waitFor({ state: 'hidden', timeout: LOGIN_WAIT_MS }).catch(() => undefined);
   if ((await visiblePassword(page).count()) > 0) throw new LiveError(`the login at ${at} didn't work: the password field is still there (wrong credentials, a second step or a captcha); log in by hand with "flows login" instead`);
 }
 

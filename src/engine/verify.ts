@@ -4,6 +4,7 @@ import { GROUNDING, GROUNDING_LABELS, groundingInput } from '../decider/entailme
 import type { Lookup } from '../graph/lookup.ts';
 import type { Graph, GraphNode } from '../graph/schema.ts';
 import { FlowSchema, type Flow } from '../model/flow.ts';
+import { JOURNEY } from '../model/tags.ts';
 import { actionOf, claimOf, flowName, isRunClaim, label, LOGIN_CLAIM, premiseOf } from './describe.ts';
 import { routeFor, type Backend } from './backend.ts';
 import { errorSource, errorWhen, flowId } from './candidates.ts';
@@ -25,7 +26,7 @@ export type Human = { steps: boolean; text: boolean };
 // backend: the project's API graphs, for the routes that answer a UI flow's calls.
 export type VerifyContext = { graph: Graph; nodes: Lookup; grounding: Decider; maxDepth: number; human?: ReadonlyMap<string, Human>; backend?: Backend };
 
-const UI_KINDS = new Set(['page', 'layout', 'component', 'form', 'action']);
+const UI_KINDS = new Set(['page', 'layout', 'component', 'form', 'action', 'link']);
 
 // Every evidence item must be a node of this graph at the place it names; one that isn't makes the claim false.
 function cite(evidence: Evidence, ctx: VerifyContext): { nodes: GraphNode[]; problem?: string } {
@@ -216,7 +217,8 @@ async function verifyOne(input: unknown, ctx: VerifyContext): Promise<Verificati
   const template = flowName({ steps }, ctx.nodes);
   let kept: Flow = { ...flow, steps };
   claims += 1;
-  if (flow.name === template || (await supported(premise, flow.name, ctx)).ok) proven += 1;
+  // A journey is named from the pages it passes through, which its steps cite.
+  if (flow.name === template || flow.tags.includes(JOURNEY) || (await supported(premise, flow.name, ctx)).ok) proven += 1;
   else {
     reasons.push(`name "${flow.name}" is not supported by the steps; using "${template ?? flow.id}"`);
     kept = { ...kept, name: template ?? flow.id };

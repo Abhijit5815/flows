@@ -3,6 +3,8 @@ import type { Project, Repo } from '../config/project.ts';
 import { repoFile } from '../graph/store.ts';
 import { FlowSchema } from '../model/flow.ts';
 import { readCache, writeJsonAtomic } from '../shared/json-file.ts';
+import { QaEntrySchema } from './qa.ts';
+import { SinceSchema } from './since.ts';
 
 const DecisionViewSchema = z.object({ label: z.string(), probs: z.record(z.string(), z.number()), by: z.enum(['decider', 'llm', 'fallback']) });
 
@@ -21,6 +23,10 @@ export const FlowSetSchema = z.object({
   roles: z.array(z.object({ guard: z.string(), node: z.string(), covered: z.boolean() })).default([]),
   // Phase 7: flows the last scan had and this one doesn't, because the code changed.
   gone: z.array(z.object({ id: z.string(), name: z.string(), reason: z.string() })).default([]),
+  // What this scan found new or changed since the one before, and the commit it saw (absent in a cache from before).
+  since: SinceSchema.optional(),
+  // An AI's QA review of a flow, by flow id; kept while the flow is unchanged.
+  qa: z.record(z.string(), QaEntrySchema).default({}),
 });
 
 export type FlowSet = z.infer<typeof FlowSetSchema>;

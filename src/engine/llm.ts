@@ -16,13 +16,14 @@ const AnswerSchema = z.object({ key: z.string(), value: z.unknown() });
 // - a reply that fails its schema is dropped, and the flow keeps what source gave it;
 // - the first provider or config failure turns the LLM off for the rest of the run and is reported once.
 export class OptionalLlm {
-  readonly #gateway: LlmGateway | undefined;
+  #gateway: LlmGateway | undefined;
   readonly #cacheFile: string;
   readonly #answersFile: string | undefined;
   readonly #onOff: (reason: string) => void;
   #cache: Record<string, unknown> | undefined;
   #answers: Map<string, unknown> | undefined;
   #off = false;
+  offBecause: string | undefined; // why the LLM is off, once a provider or config failure turned it off
   pending = 0; // requests waiting for the coding assistant (the assistant provider)
 
   constructor(gateway: LlmGateway | undefined, cacheFile: string, onOff: (reason: string) => void, answersFile?: string) {
@@ -30,6 +31,14 @@ export class OptionalLlm {
     this.#cacheFile = cacheFile;
     this.#onOff = onOff;
     this.#answersFile = answersFile;
+  }
+
+  // The review page switches provider without restarting: the new gateway starts with a clean slate.
+  use(gateway: LlmGateway): void {
+    this.#gateway = gateway;
+    this.#off = false;
+    this.offBecause = undefined;
+    this.pending = 0;
   }
 
   #shared(request: LlmRequest<unknown>): boolean {
@@ -86,6 +95,7 @@ export class OptionalLlm {
       }
       if (error instanceof ProviderError || error instanceof ConfigError) {
         this.#off = true;
+        this.offBecause = error.message;
         this.#onOff(error.message);
         return undefined;
       }

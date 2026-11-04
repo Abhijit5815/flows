@@ -326,13 +326,54 @@ function extract({ files, facts, resolver, graph }: ExtractContext): Unrecognise
       .find((text) => text !== undefined);
 
   // A form's field names, including inputs of components rendered inside it (<Login /> inside an auth form).
-  const fieldsIn = (root: Node, seen: Set<Node>): string[] =>
+  // byId collects the fields that were found by their id.
+  const fieldsIn = (root: Node, seen: Set<Node>, byId: Set<string>): string[] =>
     jsxElements(root).flatMap((element) => {
-      const name = attribute(element, 'name');
+      // A controlled field often has no name, only an id (<Input id="email" value={email} />): an input, select or
+      // textarea, or a component whose name says it is one, is found by its id then.
+      const tag = tagOf(element).getText();
+      const named = attribute(element, 'name');
+      const name = named ?? (/^(input|select|textarea)$|^[A-Z].*(input|field|select|textarea)/i.test(tag) ? attribute(element, 'id') : undefined);
       const value = name === undefined ? undefined : resolver.string(name);
+      if (named === undefined && value !== undefined) byId.add(value);
       const nested = componentsOf(element).filter((component) => !seen.has(component));
       for (const component of nested) seen.add(component);
-      return [...(value === undefined ? [] : [value]), ...nested.flatMap((component) => fieldsIn(component, seen))];
+      return [...(value === undefined ? [] : [value]), ...nested.flatMap((component) => fieldsIn(component, seen, byId))];
+    });
+
+  // The words of a heading when they are all fixed text ("Log in to Joe&apos;s Shop"), else undefined: a heading with a
+  // {value} in it says something different each time.
+  const ENTITIES: Record<string, string> = { '&apos;': "'", '&#39;': "'", '&quot;': '"', '&amp;': '&', '&lt;': '<', '&gt;': '>', '&nbsp;': ' ' };
+  const fixedText = (node: Node): string | undefined => {
+    if (Node.isJsxText(node)) return node.getText().replace(/&[#\w]+;/g, (entity) => ENTITIES[entity] ?? entity);
+    if (Node.isJsxExpression(node)) {
+      const inner = node.getExpression();
+      return inner !== undefined && (Node.isStringLiteral(inner) || Node.isNoSubstitutionTemplateLiteral(inner)) ? inner.getLiteralValue() : undefined;
+    }
+    if (Node.isJsxElement(node)) {
+      const parts = node.getJsxChildren().map(fixedText);
+      return parts.every((part) => part !== undefined) ? parts.join('') : undefined;
+    }
+    return undefined;
+  };
+  // A heading is only worth asserting when the page always shows it: not inside a condition, a switch, a short-circuit or a
+  // callback (a list's map).
+  const alwaysShown = (element: Node, root: Node): boolean => {
+    for (let node = element.getParent(); node !== undefined && node !== root; node = node.getParent()) {
+      if (Node.isIfStatement(node) || Node.isSwitchStatement(node) || Node.isConditionalExpression(node) || Node.isCallExpression(node)) return false;
+      if (Node.isBinaryExpression(node) && ['&&', '||', '??'].includes(node.getOperatorToken().getText())) return false;
+    }
+    return true;
+  };
+  // The <h1> a page always shows, from its own code and the components it renders.
+  const headingsIn = (root: Node, seen: Set<Node>): string[] =>
+    jsxElements(root).flatMap((element) => {
+      if (!alwaysShown(element, root)) return [];
+      const nested = componentsOf(element).filter((component) => !seen.has(component));
+      for (const component of nested) seen.add(component);
+      const heading = tagOf(element).getText() === 'h1' && Node.isJsxOpeningElement(element) ? fixedText(element.getParentOrThrow()) : undefined;
+      const text = heading?.replace(/\s+/g, ' ').trim();
+      return [...(text !== undefined && text.length >= 3 && text.length <= 100 ? [text] : []), ...nested.flatMap((component) => headingsIn(component, seen))];
     });
 
   // The prop a component's own attribute passes on: action={action} from ({ action }) or props.action from (props).
@@ -347,7 +388,7 @@ function extract({ files, facts, resolver, graph }: ExtractContext): Unrecognise
 
   // A form component that takes what it runs as a prop (<Form action={register}>): a form of its own on each page that
   // uses it, with the action that page passes, so two pages sharing it are two flows.
-  const propForms = new Map<Node, { props: string[]; fields: string[]; submit?: string }[]>();
+  const propForms = new Map<Node, { props: string[]; fields: string[]; ids: string[]; submit?: string }[]>();
 
   // Walks one page, layout or component: what it renders, its forms and click actions, and what it fetches.
   const visited = new Set<string>();
@@ -369,7 +410,9 @@ function extract({ files, facts, resolver, graph }: ExtractContext): Unrecognise
       }
       if (tag === 'form' && Node.isJsxOpeningElement(element)) {
         const body = element.getParentOrThrow();
-        const fields = [...new Set(fieldsIn(body, new Set()))];
+        const byId = new Set<string>();
+        const fields = [...new Set(fieldsIn(body, new Set(), byId))];
+        const ids = [...byId];
         const props = ['action', 'onSubmit'].flatMap((name) => {
           const value = attribute(element, name);
           const prop = value === undefined ? undefined : propOf(value, fn);
@@ -377,12 +420,12 @@ function extract({ files, facts, resolver, graph }: ExtractContext): Unrecognise
         });
         const submit = submitText(body);
         if (props.length > 0) {
-          propForms.set(fn, [...(propForms.get(fn) ?? []), { props, fields, ...(submit === undefined ? {} : { submit }) }]);
+          propForms.set(fn, [...(propForms.get(fn) ?? []), { props, fields, ids, ...(submit === undefined ? {} : { submit }) }]);
           continue;
         }
         forms += 1;
         const name = `${owner}#form${forms > 1 ? forms : ''}`;
-        const form = graph.add(keyOf(element), { kind: 'form', name, ...resolver.where(element), attrs: { fields, ...(submit === undefined ? {} : { submit }) } });
+        const form = graph.add(keyOf(element), { kind: 'form', name, ...resolver.where(element), attrs: { fields, ...(ids.length === 0 ? {} : { ids }), ...(submit === undefined ? {} : { submit }) } });
         graph.edge(key, form, 'contains');
         const targets = [
           ...['action', 'onSubmit'].flatMap((name) => {
@@ -418,9 +461,11 @@ function extract({ files, facts, resolver, graph }: ExtractContext): Unrecognise
           if (targets.length === 0) continue;
           forms += 1;
           const body = Node.isJsxOpeningElement(element) ? element.getParentOrThrow() : element;
-          const fields = [...new Set([...shared.fields, ...fieldsIn(body, new Set())])];
+          const byId = new Set(shared.ids);
+          const fields = [...new Set([...shared.fields, ...fieldsIn(body, new Set(), byId)])];
+          const ids = [...byId];
           const submit = submitText(body) ?? shared.submit;
-          const form = graph.add(`${keyOf(element)}#form`, { kind: 'form', name: `${owner}#form${forms > 1 ? forms : ''}`, ...resolver.where(element), attrs: { fields, ...(submit === undefined ? {} : { submit }) } });
+          const form = graph.add(`${keyOf(element)}#form`, { kind: 'form', name: `${owner}#form${forms > 1 ? forms : ''}`, ...resolver.where(element), attrs: { fields, ...(ids.length === 0 ? {} : { ids }), ...(submit === undefined ? {} : { submit }) } });
           graph.edge(key, form, 'contains');
           for (const { target, via } of targets) {
             handlers.add(target);
@@ -461,7 +506,8 @@ function extract({ files, facts, resolver, graph }: ExtractContext): Unrecognise
     const where = fn === undefined ? { file, line: 1 } : resolver.where(holderOf(fn));
     if (kind === 'page') {
       const path = routePath(folder);
-      const key = graph.add(`page:${path}`, { kind: 'page', name: path, ...where, attrs: { path } });
+      const headings = fn === undefined ? [] : [...new Set(headingsIn(fn, new Set()))];
+      const key = graph.add(`page:${path}`, { kind: 'page', name: path, ...where, attrs: { path, ...(headings.length === 0 ? {} : { headings }) } });
       pages.push({ key, path, folder });
       if (fn !== undefined) visit(key, fn, qualifiedName(holderOf(fn)) ?? path);
     } else {

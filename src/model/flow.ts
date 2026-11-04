@@ -11,6 +11,8 @@ const UiCheckSchema = z
     kind: z.literal('ui'),
     page: z.string().min(1).optional(),
     element: z.string().min(1).optional(),
+    // Text the page always shows (its heading), for a test to assert beyond the URL.
+    text: z.array(z.string().min(1)).min(1).optional(),
     evidence: EvidenceListSchema,
   })
   .refine((check) => check.page !== undefined || check.element !== undefined, {

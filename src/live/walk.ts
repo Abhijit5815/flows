@@ -4,11 +4,13 @@ import { refreshFlows, type EngineDeps } from '../engine/engine.ts';
 import { loadFlows, type FlowSet } from '../engine/store.ts';
 import { loadGraph } from '../graph/store.ts';
 import { LiveError } from '../shared/errors.ts';
+import { explore } from './explorer.ts';
 import { inspect, type Walk } from './inspector.ts';
 import { guidedSteps, knowing } from './know.ts';
-import { sessionFile } from './login.ts';
+import { envCredentials, sessionFile } from './login.ts';
 import { indexOf } from './match.ts';
-import { loadRuns, runDir, saveRun } from './run.ts';
+import { loadRuns, runDir, saveRun, type Run } from './run.ts';
+import { sourceTexts } from './texts.ts';
 
 // One inspector walk for a project, as `flows inspect` and the review page's "Walk this in the inspector" start it:
 // at the URL given, else where the newest explorer run started; signed in with the session given, else that run's
@@ -66,5 +68,50 @@ export async function walkInInspector(
     const sets: { repo: Repo; set: FlowSet }[] = [];
     for (const { repo, graph } of graphs) sets.push({ repo, set: await refreshFlows(project, repo, graph, deps) });
     return { ...walk, steps: guided?.steps.length ?? 0, sets };
+  });
+}
+
+// One read-only explorer run, as `flows explore` and the review page's "Explore" start it: signed out, or as a login
+// that has a saved session or env credentials. The run is saved and every scanned repo's flows are built again.
+export type ExploreRequest = { url: string; as?: string; headed?: boolean };
+
+export async function exploreProject(
+  project: Project,
+  request: ExploreRequest,
+  deps: EngineDeps,
+  log: (line: string) => void,
+  serial: <T>(work: () => Promise<T>) => Promise<T> = (work) => work(),
+): Promise<{ run: Run; sets: { repo: Repo; set: FlowSet }[]; noRepoScanned: boolean }> {
+  const { url, as: name } = request;
+  if (name !== undefined && !LoginNameSchema.safeParse(name).success) throw new LiveError(`"${name}" is not a login name`);
+  const credentials = name === undefined ? undefined : envCredentials(project.config.explorer, name);
+  const saved = name === undefined ? undefined : sessionFile(project, name);
+  const storageState = credentials === undefined && saved !== undefined && existsSync(saved) ? saved : undefined;
+  if (name !== undefined && credentials === undefined && storageState === undefined) {
+    throw new LiveError(`no saved session or env credentials for "${name}": run "flows login ${url} --as ${name}", or set explorer.logins.${name} in the config`);
+  }
+  const graphs = project.config.repos.flatMap((repo) => {
+    const graph = loadGraph(project, repo);
+    return graph === undefined ? [] : [{ repo, graph }];
+  });
+  log(`exploring ${url} ${name === undefined ? 'signed out' : `as ${name}`}; it only reads: every write and WebSocket is blocked`);
+  const run = await explore(
+    {
+      url,
+      session: name ?? null,
+      storageState,
+      credentials,
+      saveSessionTo: credentials === undefined ? undefined : saved,
+      pages: graphs.flatMap(({ graph }) => graph.nodes.flatMap((node) => (node.kind === 'page' ? [node.attrs.path] : []))),
+      source: sourceTexts(graphs.map(({ graph }) => graph)),
+      headless: request.headed !== true,
+    },
+    { decider: deps.decider, llm: deps.llm, config: project.config.explorer, runDir: (id) => runDir(project, id), log },
+  );
+  return serial(async () => {
+    saveRun(project, run);
+    const sets: { repo: Repo; set: FlowSet }[] = [];
+    for (const { repo, graph } of graphs) sets.push({ repo, set: await refreshFlows(project, repo, graph, deps) });
+    return { run, sets, noRepoScanned: graphs.length === 0 };
   });
 }

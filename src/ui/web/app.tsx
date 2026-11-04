@@ -5,15 +5,21 @@ import { createRoot } from 'react-dom/client';
 import type { ProjectView } from '../api.ts';
 import { Edit, Problem, Review, useSend } from './actions.tsx';
 import { AddFlow } from './add.tsx';
+import { AiPanel } from './ai.tsx';
 import { Bulk } from './bulk.tsx';
 import { Canvas } from './canvas.tsx';
+import { ScanBar } from './changes.tsx';
 import { CategoryEditor } from './categories.tsx';
 import { get } from './client.ts';
 import { InspectorStatus, useInspector, WalkButton } from './inspect.tsx';
+import { LivePanel } from './live.tsx';
 import { hidden, itemsOf, matches, NO_FILTERS, repoKey, type Filters } from './model.ts';
 import { Panel } from './panel.tsx';
+import { QaBar, QaSection } from './qa.tsx';
 import { RejectedList } from './rejected.tsx';
+import { FlowTable } from './table.tsx';
 import { dependentsOf, Subflows } from './subflows.tsx';
+import { useTask } from './task.tsx';
 
 const STATUSES = ['confirmed', 'verified', 'observed-only', 'unverified', 'unreachable', 'rejected'];
 
@@ -31,11 +37,13 @@ function App() {
   const [error, setError] = useState<string | undefined>();
   const [filters, setFilters] = useState<Filters>(NO_FILTERS);
   const [selected, setSelected] = useState<string | undefined>();
-  const [side, setSide] = useState<'flow' | 'rejected' | 'categories' | 'add'>('flow');
+  const [side, setSide] = useState<'flow' | 'rejected' | 'categories' | 'add' | 'live' | 'ai'>('flow');
+  const [view, setView] = useState<'canvas' | 'table' | undefined>();
   const promoting = useSend((view) => setProject(view));
 
   const load = useCallback(() => get<ProjectView>('/api/project').then(setProject, (failure: Error) => setError(failure.message)), []);
   const inspector = useInspector(load);
+  const task = useTask(load);
   useEffect(() => {
     load();
   }, [load]);
@@ -43,7 +51,9 @@ function App() {
   const items = useMemo(() => (project === undefined ? [] : itemsOf(project)), [project]);
   const shown = useMemo(() => items.filter((item) => !hidden(item) && matches(item, filters)), [items, filters]);
   const current = items.find((item) => item.key === selected);
-  const toggle = (panel: 'rejected' | 'categories' | 'add') => setSide(side === panel ? 'flow' : panel);
+  // A long list is easier in a table: the canvas lays out every flow and step, so it is the default only for a short one.
+  const mode = view ?? (items.length > 150 ? 'table' : 'canvas');
+  const toggle = (panel: 'rejected' | 'categories' | 'add' | 'live' | 'ai') => setSide(side === panel ? 'flow' : panel);
   const select = (key: string) => {
     setSelected(key);
     setSide('flow');
@@ -79,11 +89,27 @@ function App() {
           {filter('status', 'Status', STATUSES.map((status) => [status, status]))}
           {filter('repo', 'Repo', project.repos.map((repo) => [repoKey(repo), `${repo.role} ${repo.path}`]))}
           {filter('kind', 'Kind', [['ui', 'UI'], ['api', 'API']])}
+          {filter('qa', 'AI check', [['ready', 'Ready'], ['needs-work', 'Needs work'], ['not-testable', 'Not testable'], ['none', 'Not checked']])}
+          {filter('change', 'Since last scan', [['pending', 'New or updated'], ['new', 'New'], ['changed', 'Updated']])}
         </div>
         <span className="count">
           {shown.length} of {items.length} flows
         </span>
         <div className="actions">
+          <span className="view-toggle" role="group" aria-label="View">
+            <button type="button" aria-pressed={mode === 'canvas'} onClick={() => setView('canvas')}>
+              Canvas
+            </button>
+            <button type="button" aria-pressed={mode === 'table'} onClick={() => setView('table')}>
+              Table
+            </button>
+          </span>
+          <button type="button" onClick={() => toggle('live')} aria-pressed={side === 'live'}>
+            Live app
+          </button>
+          <button type="button" onClick={() => toggle('ai')} aria-pressed={side === 'ai'}>
+            AI naming
+          </button>
           <button type="button" onClick={() => toggle('add')} aria-pressed={side === 'add'}>
             Add flow
           </button>
@@ -97,6 +123,14 @@ function App() {
             Export
           </button>
         </div>
+        <ScanBar
+          project={project}
+          items={items}
+          onShow={() => setFilters({ ...NO_FILTERS, change: 'pending' })}
+          onExport={() => get<unknown>('/api/export?changed=1').then((data) => save('flows-changed.json', JSON.stringify(data, null, 2)), (failure: Error) => setError(failure.message))}
+          onView={setProject}
+        />
+        <QaBar items={shown} task={task} />
         <Bulk items={shown} categories={project.categories} onView={setProject} />
         {unexplored.length > 0 ? (
           <p className="roles" role="note">
@@ -110,7 +144,7 @@ function App() {
       </header>
       <main className={`workspace${(side === 'flow' && current !== undefined) || side !== 'flow' ? ' with-panel' : ''}`}>
         <div className="canvas">
-          {shown.length === 0 ? <p className="page-message">No flow matches these filters.</p> : <Canvas items={shown} categories={project.categories} selected={selected} onSelect={select} />}
+          {shown.length === 0 ? <p className="page-message">No flow matches these filters.</p> : mode === 'table' ? <FlowTable items={shown} categories={project.categories} selected={selected} onSelect={select} /> : <Canvas items={shown} categories={project.categories} selected={selected} onSelect={select} />}
         </div>
         {side === 'rejected' ? (
           <RejectedList
@@ -126,11 +160,14 @@ function App() {
             }
           />
         ) : null}
+        {side === 'live' ? <LivePanel project={project} inspector={inspector} task={task} onClose={() => setSide('flow')} /> : null}
+        {side === 'ai' ? <AiPanel project={project} task={task} onView={setProject} onClose={() => setSide('flow')} /> : null}
         {side === 'add' ? <AddFlow project={project} onView={setProject} onClose={() => setSide('flow')} /> : null}
         {side === 'categories' ? <CategoryEditor project={project} onView={setProject} onClose={() => setSide('flow')} /> : null}
         {side === 'flow' && current !== undefined ? (
           <Panel item={current} onClose={() => setSelected(undefined)}>
             <WalkButton item={current} inspector={inspector} />
+            <QaSection item={current} task={task} />
             <Review item={current} onView={setProject} />
             <Edit item={current} categories={project.categories} users={dependentsOf(current, items)} onView={setProject} />
             <Subflows item={current} items={items} onView={setProject} />

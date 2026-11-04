@@ -25,10 +25,10 @@ const ApiNodeSchema = z.discriminatedUnion('kind', [
 ]);
 
 const WebNodeSchema = z.discriminatedUnion('kind', [
-  node('page', z.object({ path: z.string().startsWith('/') })),
+  node('page', z.object({ path: z.string().startsWith('/'), headings: z.array(z.string().min(1)).optional() })), // headings: the text of its <h1>, as the page always shows it
   node('layout', z.object({ path: z.string().startsWith('/') })),
   node('component', Named),
-  node('form', z.object({ fields: z.array(z.string().min(1)), submit: z.string().min(1).optional() })), // submit: its button's text
+  node('form', z.object({ fields: z.array(z.string().min(1)), ids: z.array(z.string().min(1)).optional(), submit: z.string().min(1).optional() })), // ids: the fields found by their id, having no name; submit: its button's text
   // redirects: where it sends the browser (redirect('/account')); messages: the strings it returns for the form to show.
   node('action', z.object({ name: z.string().min(1), server: z.boolean(), redirects: z.array(z.string().startsWith('/')).optional(), messages: z.array(z.string().min(1)).optional(), text: z.string().min(1).optional(), library: z.string().min(1).optional() })),
   node('guard', Named.extend({ carries: z.object({ header: z.string().optional(), scheme: z.string().optional(), cookie: z.string().optional() }).optional() })),

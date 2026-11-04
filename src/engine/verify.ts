@@ -77,6 +77,12 @@ function checkProblem(step: Step, cited: GraphNode[], flow: Flow, ctx: VerifyCon
   const opens = nodes.some((node) => node.kind === 'page' && label(node) === check.page && cited.some((own) => own.id === node.id));
   const redirects = nodes.some((node) => node.kind === 'action' && node.attrs.redirects?.includes(check.page ?? '') && cited.some((own) => own.id === node.id));
   if (check.page !== undefined && !opens && !redirects) return `the step does not open or redirect to ${check.page}`;
+  if (check.text !== undefined) {
+    const page = nodes.find((node) => node.kind === 'page' && label(node) === check.page);
+    const known = page?.kind === 'page' ? (page.attrs.headings ?? []) : [];
+    const missing = check.text.filter((text) => !known.includes(text));
+    if (missing.length > 0) return `${check.page} does not always show "${missing.join('", "')}"`;
+  }
   if (check.element !== undefined) {
     const shown = reachable(cited, ctx);
     if (!nodes.some((node) => label(node) === check.element && shown.has(node.id))) return `${check.element} is not on what this step shows`;

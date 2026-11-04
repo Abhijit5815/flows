@@ -4,7 +4,8 @@
       "id": "ui-e68b64da",
       "name": "User can view the home page",
       "steps": [
-        "ui: Open / | check /"
+        "ui: Open / | check /",
+        "  heading: \"Welcome\""
       ]
     },
     {
@@ -68,6 +69,7 @@
       "name": "User can sign out",
       "steps": [
         "ui: Open / | check /",
+        "  heading: \"Welcome\"",
         "ui: Press Sign out",
         "  action: press role=button[name=\"Sign out\"]",
         "api: Calls POST /api/auth/logout"

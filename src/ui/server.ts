@@ -1,10 +1,10 @@
 import { randomBytes } from 'node:crypto';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { categories, type Project } from '../config/project.ts';
+import { categories, projectDataDir, type LlmConfig, type Project } from '../config/project.ts';
 import type { EmbeddingProvider } from '../embeddings/provider.ts';
 import { verdictsOf, type EngineDeps } from '../engine/engine.ts';
 import { exportFlows } from '../engine/export.ts';
@@ -15,10 +15,11 @@ import { repoFile } from '../graph/store.ts';
 import { listFiles } from '../ingest/files.ts';
 import { loadRules } from '../rules/learned.ts';
 import { parseOrThrow } from '../shared/validate.ts';
-import { walkInInspector } from '../live/walk.ts';
-import { TOKEN_HEADER, type InspectorView, type ProjectView, type Snippet } from './api.ts';
+import { exploreProject, walkInInspector } from '../live/walk.ts';
+import type { LlmGateway } from '../llm/gateway.ts';
+import { TOKEN_HEADER, type InspectorView, type LlmView, type ProjectView, type Snippet, type TaskView } from './api.ts';
 import { describeFlow, palette } from './propose.ts';
-import { BadRequest, DescribeBody, InspectBody, writes } from './writes.ts';
+import { BadRequest, DescribeBody, ExploreBody, InspectBody, QaBody, writes } from './writes.ts';
 
 const CONTEXT_LINES = 6; // shown above and below a cited line
 const MAX_BODY = 1 << 20;
@@ -86,11 +87,12 @@ async function body(req: IncomingMessage): Promise<unknown> {
 // PLAN.md Phase 5: the review page, a local web page the CLI opens. It listens on 127.0.0.1 only. Every API call
 // carries this run's random token, which only the page itself can read, and the Host header must be this server's,
 // so other websites can neither call the API nor reach it by DNS rebinding.
-export async function startUi(start: Project, deps: EngineDeps & { embedder: EmbeddingProvider }, port = 0): Promise<Ui> {
+// gatewayFor: the LLM the page switches to when someone picks another provider.
+export async function startUi(start: Project, deps: EngineDeps & { embedder: EmbeddingProvider; gatewayFor: (config: LlmConfig) => LlmGateway }, port = 0): Promise<Ui> {
   const token = randomBytes(24).toString('hex');
   const assets = await bundle();
   const listed = new Map<string, Set<string>>();
-  const changes = writes(start, deps);
+  const changes = writes(start, deps, deps.gatewayFor);
   let project = start;
   let hosts = new Set<string>();
   // One write at a time: each rebuilds flows and rewrites files that the next one reads.
@@ -107,10 +109,22 @@ export async function startUi(start: Project, deps: EngineDeps & { embedder: Emb
     '/api/bulk': changes.bulk,
     '/api/categories': changes.categories,
     '/api/draw': changes.draw,
+    '/api/seen': async (input) => changes.seen(input),
+  };
+
+  const llmView = (): LlmView => {
+    const { llm } = project.config;
+    return { provider: llm.provider, model: 'model' in llm ? llm.model : null, base_url: 'base_url' in llm ? llm.base_url : null, api_key_env: 'api_key_env' in llm ? (llm.api_key_env ?? null) : null };
+  };
+  const sessions = (): string[] => {
+    const dir = join(projectDataDir(project), 'sessions');
+    return existsSync(dir) ? readdirSync(dir).flatMap((file) => (file.endsWith('.json') ? [file.slice(0, -5)] : [])) : [];
   };
 
   const view = (): ProjectView => ({
     name: project.config.name,
+    llm: llmView(),
+    sessions: sessions(),
     categories: [...categories(project.config)],
     repos: project.config.repos.map((repo) => ({
       path: repo.path,
@@ -153,15 +167,28 @@ export async function startUi(start: Project, deps: EngineDeps & { embedder: Emb
     return json(res, 200, item);
   };
 
+  // An explorer run, or naming flows with the AI: one at a time, run in the background; the page polls /api/task.
+  let task: TaskView = { running: null, last: null };
+  const startTask = (kind: 'explore' | 'name' | 'qa', work: () => Promise<string>): TaskView => {
+    if (task.running !== null) throw new HttpError(409, `${task.running === 'explore' ? 'an explorer run' : task.running === 'qa' ? 'an AI check' : 'naming'} is already in progress`);
+    if (kind === 'explore' && inspector.running) throw new HttpError(409, 'the inspector is open; press Done in its window first');
+    deps.llm.pending = 0;
+    task = { running: kind, last: task.last };
+    const finish = (message: string, error: string | null) => (task = { running: null, last: { task: kind, message, error, pending: deps.llm.pending, off: deps.llm.offBecause ?? null } });
+    work().then((message) => finish(message, null), (error: Error) => finish('', error.message));
+    return task;
+  };
+
   // One inspector at a time (PLAN.md Phase 3). It opens a browser window for the person; the walk can take as long as
   // they like, and only saving it goes through the write queue.
   let inspector: InspectorView = { running: false, last: null };
   const startInspector = (body: unknown): InspectorView => {
     if (inspector.running) throw new HttpError(409, 'the inspector is already open; press Done in its window first');
-    const { repo: key, flow: id } = parseOrThrow(InspectBody, body, 'inspector request', BadRequest);
+    if (task.running === 'explore') throw new HttpError(409, 'an explorer run is in progress; wait for it to finish');
+    const { repo: key, flow: id, url, as } = parseOrThrow(InspectBody, body, 'inspector request', BadRequest);
     const flow = key === undefined || id === undefined ? undefined : { repo: changes.graphOf(key).repo, id };
     inspector = { running: true, last: inspector.last };
-    walkInInspector(project, { flow }, deps, () => undefined, serial).then(
+    walkInInspector(project, { flow, url, as }, deps, () => undefined, serial).then(
       (walk) => (inspector = { running: false, last: { flow: id ?? null, ticked: walk.ticked.length, steps: walk.steps, error: null } }),
       (error: Error) => (inspector = { running: false, last: { flow: id ?? null, ticked: 0, steps: 0, error: error.message } }),
     );
@@ -181,7 +208,34 @@ export async function startUi(start: Project, deps: EngineDeps & { embedder: Emb
     if (req.method === 'GET' && url.pathname === '/api/observed') return observed(res, url.searchParams.get('ref') ?? '');
     if (req.method === 'GET' && url.pathname === '/api/inspect') return json(res, 200, inspector);
     if (req.method === 'POST' && url.pathname === '/api/inspect') return json(res, 202, startInspector(await body(req)));
-    if (req.method === 'GET' && url.pathname === '/api/export') return json(res, 200, exportFlows(project.config.repos.flatMap((repo) => loadFlows(project, repo) ?? []), categories(project.config)));
+    if (req.method === 'GET' && url.pathname === '/api/task') return json(res, 200, task);
+    if (req.method === 'POST' && url.pathname === '/api/explore') {
+      const request = parseOrThrow(ExploreBody, await body(req), 'explorer request', BadRequest);
+      return json(res, 202, startTask('explore', async () => {
+        const { run } = await exploreProject(project, request, deps, () => undefined, serial);
+        return `${run.states.length} pages and ${run.requests.length} requests seen`;
+      }));
+    }
+    if (req.method === 'POST' && url.pathname === '/api/name') {
+      return json(res, 202, startTask('name', async () => {
+        await serial(() => changes.name());
+        return 'flows named';
+      }));
+    }
+    if (req.method === 'POST' && url.pathname === '/api/qa') {
+      const input = parseOrThrow(QaBody, await body(req), 'QA request', BadRequest);
+      return json(res, 202, startTask('qa', async () => {
+        const done = await serial(() => changes.qa(input));
+        return `${done} flow(s) checked`;
+      }));
+    }
+    if (req.method === 'POST' && url.pathname === '/api/llm') {
+      if (task.running === 'name' || task.running === 'qa') throw new HttpError(409, 'the AI is busy; wait for it to finish');
+      changes.llm(await body(req));
+      project = changes.project();
+      return json(res, 200, view());
+    }
+    if (req.method === 'GET' && url.pathname === '/api/export') return json(res, 200, exportFlows(project.config.repos.flatMap((repo) => loadFlows(project, repo) ?? []), categories(project.config), url.searchParams.get('changed') === '1'));
     if (req.method === 'GET' && url.pathname === '/api/nodes') return json(res, 200, palette(changes.graphOf(url.searchParams.get('repo') ?? '').graph));
     if (req.method === 'POST' && url.pathname === '/api/describe') {
       const { repo: key, text } = parseOrThrow(DescribeBody, await body(req), 'description', BadRequest);

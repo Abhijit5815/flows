@@ -11,12 +11,13 @@ import type { EmbeddingProvider } from '../embeddings/provider.ts';
 import { loadEdits } from '../engine/edits.ts';
 import { buildFlows } from '../engine/engine.ts';
 import { OptionalLlm } from '../engine/llm.ts';
-import { saveFlows } from '../engine/store.ts';
+import { loadFlows, saveFlows } from '../engine/store.ts';
 import { scanRepo } from '../ingest/pipeline.ts';
 import { observedDir, runDir, saveRun, type Run } from '../live/run.ts';
 import { tempProject } from '../shared/testing/project.ts';
 import { MemoryTraceSink } from '../trace/sink.ts';
-import { TOKEN_HEADER, type InspectorView, type ProjectView, type Snippet } from './api.ts';
+import { ProviderError } from '../shared/errors.ts';
+import { TOKEN_HEADER, type InspectorView, type TaskView, type ProjectView, type Snippet } from './api.ts';
 import { startUi, type Ui } from './server.ts';
 
 const tmp = mkdtempSync(join(tmpdir(), 'flows-ui-'));
@@ -48,7 +49,7 @@ before(async () => {
   assert.ok(graph);
   const deps = { decider: unsure, grounding: unsure, llm: new OptionalLlm(undefined, join(tmp, 'llm.json'), () => {}), trace: new MemoryTraceSink(), categories: categories(project.config), categoryLabels: [], config: project.config.engine };
   saveFlows(project, repo, await buildFlows(graph, { verdicts: new Map(), edits: { schema_version: 0, overrides: {}, added: [] } }, deps));
-  ui = await startUi(project, { ...deps, embedder });
+  ui = await startUi(project, { ...deps, embedder, gatewayFor: () => ({ model: 'stub', completeJson: () => Promise.reject(new ProviderError('the stub model is down', 503)) }) });
   token = /name="flows-token" content="([0-9a-f]+)"/.exec(await (await fetch(ui.url)).text())?.[1] ?? '';
 });
 after(async () => {
@@ -190,4 +191,70 @@ test('the inspector route: a bad request is refused, and a walk with nowhere to 
   do view = (await (await api('/api/inspect')).json()) as InspectorView;
   while (view.running);
   assert.match(view.last?.error ?? '', /no URL to open/);
+});
+
+const send = (path: string, body: unknown) => fetch(new URL(path, ui.url), { method: 'POST', headers: { [TOKEN_HEADER]: token, 'content-type': 'application/json' }, body: JSON.stringify(body) });
+const finished = async (): Promise<TaskView> => {
+  let view: TaskView;
+  do view = (await (await api('/api/task')).json()) as TaskView;
+  while (view.running !== null);
+  return view;
+};
+
+test('the live address: only http(s) is taken, and an explorer run that cannot start ends with the reason', async () => {
+  assert.equal((await send('/api/inspect', { url: 'file:///etc/passwd' })).status, 400);
+  assert.equal((await send('/api/explore', { url: 'not a url' })).status, 400);
+  assert.equal((await send('/api/explore', { url: 'http://127.0.0.1:9/', as: 'Not A Login' })).status, 400);
+  assert.equal((await send('/api/explore', { url: 'http://127.0.0.1:9/', as: 'nobody' })).status, 202);
+  assert.match((await finished()).last?.error ?? '', /no saved session or env credentials for "nobody"/);
+  assert.deepEqual(((await (await api('/api/project')).json()) as ProjectView).sessions, []);
+});
+
+test('the AI: a provider is chosen on the page and kept in the config; naming reports why a model could not be used', async () => {
+  assert.equal((await send('/api/llm', { provider: 'openai-compatible', base_url: 'nope', model: 'm' })).status, 400);
+  assert.equal((await send('/api/llm', { provider: 'openai-compatible', base_url: 'http://localhost:11434/v1' })).status, 400, 'a model is needed');
+  assert.equal((await send('/api/llm', { provider: 'carrier-pigeon' })).status, 400);
+  const changed = await send('/api/llm', { provider: 'openai-compatible', base_url: 'http://localhost:1/v1', model: 'tiny', api_key_env: 'MY_KEY' });
+  assert.deepEqual(((await changed.json()) as ProjectView).llm, { provider: 'openai-compatible', model: 'tiny', base_url: 'http://localhost:1/v1', api_key_env: 'MY_KEY' });
+  assert.equal(((JSON.parse(readFileSync(join(project.root, '.flows', 'config.json'), 'utf8')) as { llm: { model: string } }).llm.model), 'tiny');
+  assert.equal((await send('/api/name', {})).status, 202);
+  const done = await finished();
+  assert.equal(done.last?.task, 'name');
+  assert.match(done.last?.off ?? '', /the stub model is down/);
+  const assistant = (await (await send('/api/llm', { provider: 'assistant' })).json()) as ProjectView;
+  assert.deepEqual([assistant.llm.provider, assistant.llm.model], ['assistant', null]);
+});
+
+test('new and changed flows can be exported alone, and marking them seen clears the marks', async () => {
+  const repo = project.config.repos[0];
+  const set = loadFlows(project, repo);
+  assert.ok(set);
+  const target = set.flows.find((flow) => flow.status !== 'rejected');
+  assert.ok(target);
+  // Two flows are on, only one is marked.
+  const on = set.flows.filter((flow) => flow.status !== 'rejected').slice(0, 2).map((flow) => flow.id);
+  saveFlows(project, repo, { ...set, flows: set.flows.map((flow) => (on.includes(flow.id) ? { ...flow, enabled: true } : flow)), since: { at: 'now', commit: null, branch: null, dirty: false, previous_commit: null, files_changed: null, first: false, changes: { [target.id]: 'new' }, replaces: {}, prints: {} } });
+  const exported = async (query: string) => ((await (await api(`/api/export${query}`)).json()) as { flows: { id: string }[] }).flows.map((flow) => flow.id);
+  const all = await exported('');
+  const changed = await exported('?changed=1');
+  assert.ok(changed.includes(target.id) && changed.length < all.length, 'only the marked flow, with the subflows it runs');
+  const seen = (await (await send('/api/seen', { flows: [{ repo: `${repo.role}:${repo.path}`, flow: target.id }] })).json()) as ProjectView;
+  assert.deepEqual(seen.repos[0].set?.since?.changes, {});
+  assert.deepEqual(await exported('?changed=1'), []);
+  assert.equal((await send('/api/seen', { flows: [] })).status, 400);
+});
+
+test('the AI check: only listed flows are asked about, and a model that cannot be reached is reported, not hidden', async () => {
+  const repo = project.config.repos[0];
+  assert.equal((await send('/api/qa', { flows: [] })).status, 400);
+  await send('/api/llm', { provider: 'openai-compatible', base_url: 'http://localhost:1/v1', model: 'tiny' });
+  const target = loadFlows(project, repo)?.flows[0];
+  assert.ok(target);
+  assert.equal((await send('/api/qa', { flows: [{ repo: `${repo.role}:${repo.path}`, flow: target.id }] })).status, 202);
+  const done = await finished();
+  assert.equal(done.last?.task, 'qa');
+  assert.match(done.last?.off ?? '', /the stub model is down/);
+  assert.deepEqual(loadFlows(project, repo)?.qa, {}, 'nothing is recorded when the AI could not be asked');
+  assert.equal((await send('/api/qa', { flows: [{ repo: 'web:nowhere', flow: 'x' }] })).status, 202);
+  assert.match((await finished()).last?.error ?? '', /no repo web:nowhere/);
 });

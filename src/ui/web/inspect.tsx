@@ -19,7 +19,7 @@ export function useInspector(onDone: () => void) {
     }, 2000);
     return () => clearInterval(timer);
   }, [running, onDone]);
-  const start = (body: { repo?: string; flow?: string }) => {
+  const start = (body: { repo?: string; flow?: string; url?: string; as?: string }) => {
     setError(undefined);
     post<InspectorView>('/api/inspect', body).then(setState, (failure: Error) => setError(failure.message));
   };

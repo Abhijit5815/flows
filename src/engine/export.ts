@@ -8,11 +8,12 @@ export type FlowExport = { schema_version: 0; exported: string; flows: Flow[] };
 // enabled category, plus the subflows those flows run (enabled or not), so the file stands on its own.
 // shortcut: two repos of the same role can share a flow id ("Open /"); ids would repeat in the file. Prefix ids
 // with the repo if a project ever registers two web or two api repos.
-export function exportFlows(sets: readonly FlowSet[], categories: readonly Category[]): FlowExport {
+// onlyChanged: just the flows the last scan found new or changed (and not yet marked seen), with their subflows.
+export function exportFlows(sets: readonly FlowSet[], categories: readonly Category[], onlyChanged = false): FlowExport {
   const off = new Set(categories.filter((category) => !category.enabled).map((category) => category.id));
   const flows = sets.flatMap((set) => {
     const byId = new Map(set.flows.map((flow) => [flow.id, flow]));
-    const chosen = new Map(set.flows.filter((flow) => flow.enabled && flow.status !== 'rejected' && !off.has(flow.category)).map((flow) => [flow.id, flow]));
+    const chosen = new Map(set.flows.filter((flow) => flow.enabled && flow.status !== 'rejected' && !off.has(flow.category) && (!onlyChanged || set.since?.changes[flow.id] !== undefined)).map((flow) => [flow.id, flow]));
     for (const queue = [...chosen.values()]; queue.length > 0; ) {
       for (const step of (queue.shift() as Flow).steps) {
         const target = step.subflow_ref === undefined ? undefined : byId.get(step.subflow_ref);

@@ -21,8 +21,12 @@ import { loadEdits, type Edits } from './edits.ts';
 import { judge, judgeObserved, type Verdict } from './judge.ts';
 import type { OptionalLlm } from './llm.ts';
 import { proposeName } from './name.ts';
+import { gitState } from '../ingest/gitstate.ts';
+import { now } from '../rules/learned.ts';
 import { reachability, unreachableBecause } from './reach.ts';
 import { loadFlows, saveFlows, type FlowSet } from './store.ts';
+import { carryQa } from './qa.ts';
+import { carrySince, sinceScan } from './since.ts';
 import { markStale } from './stale.ts';
 import { addLoginSubflows } from './subflows.ts';
 import { verifyFlows, type Human, type Verified } from './verify.ts';
@@ -81,7 +85,7 @@ export async function buildFlows(graph: Graph, human: HumanInput, deps: EngineDe
   const index = live === undefined ? undefined : indexOf(graph);
   const roles = index === undefined || live === undefined ? [] : rolesOf(index, live.seen);
   const used = new Set<string>(); // observed flows a source flow matched
-  const set: FlowSet = { flows: [], reasons: {}, rejected: [], decisions: {}, unreachable: reach.unreachable, notes: generated.notes, runs: live?.runs.map((run) => run.id) ?? [], roles, gone: [] };
+  const set: FlowSet = { flows: [], reasons: {}, rejected: [], decisions: {}, unreachable: reach.unreachable, notes: generated.notes, runs: live?.runs.map((run) => run.id) ?? [], roles, gone: [], qa: {} };
   for (const skip of found.skipped) {
     if (skip.flow !== undefined && addedIds.has(skip.flow.id)) continue; // a person promoted it
     set.rejected.push({ subject: skip.node, name: skip.name, reasons: [skip.reason], ...(skip.flow === undefined ? {} : { flow: skip.flow }) });
@@ -181,13 +185,17 @@ export async function buildFlows(graph: Graph, human: HumanInput, deps: EngineDe
 
 // A repo's flows from its graph, what people taught Flows about it (<repo>/.flows/) and the project's live runs, saved
 // for `flows show` and the review page.
-export async function refreshFlows(project: Project, repo: Repo, graph: Graph, deps: EngineDeps): Promise<FlowSet> {
+// scan: this is a scan of the code (not a person's edit or a live run), so the flows are compared with the last scan's.
+export async function refreshFlows(project: Project, repo: Repo, graph: Graph, deps: EngineDeps, scan = false): Promise<FlowSet> {
   const dir = resolve(project.root, repo.path);
   const edits = loadEdits(dir);
   const verdicts = verdictsOf(loadRules(dir));
   const backends = repo.role === 'web' ? project.config.repos.flatMap((own) => (own.role === 'api' ? (loadGraph(project, own) ?? []) : [])) : [];
   const set = await buildFlows(graph, { verdicts, edits }, deps, liveFor(project, repo), backends);
-  markStale(set, graph, loadFlows(project, repo), edits, new Set([...Object.keys(edits.overrides), ...verdicts.keys()]));
+  const previous = loadFlows(project, repo);
+  markStale(set, graph, previous, edits, new Set([...Object.keys(edits.overrides), ...verdicts.keys()]));
+  set.qa = carryQa(set, previous);
+  set.since = scan ? sinceScan(set, previous, gitState(dir), dir, now()) : carrySince(set, previous);
   saveFlows(project, repo, set);
   return set;
 }

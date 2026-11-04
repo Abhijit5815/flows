@@ -114,6 +114,22 @@ test('errors, a request body and a redirect check stay only when source backs th
   assert.ok(result.reasons.some((reason) => reason.includes('action dropped')), 'an action the form does not have is dropped');
 });
 
+test('a heading a page does not always show is dropped from the check, and the real one stays', async () => {
+  const web = await fixture('next-basic', 'web');
+  const verify = async (flow: Flow) => {
+    const [result] = await verifyFlows([flow], { graph: web.graph, nodes: lookup(web.graph), grounding: refusing(), maxDepth: 3 });
+    assert.ok(result.ok);
+    return result;
+  };
+  const home = structuredClone(web.genuine.find((flow) => flow.id === 'ui-e68b64da') as Flow);
+  assert.ok(home.steps[0].check?.kind === 'ui' && home.steps[0].check.text?.[0] === 'Welcome');
+  assert.deepEqual((await verify(structuredClone(home))).flow.steps[0].check?.kind === 'ui' ? home.steps[0].check.text : [], ['Welcome']);
+  home.steps[0].check.text = ['Goodbye'];
+  const result = await verify(home);
+  assert.equal(result.flow.steps[0].check, null);
+  assert.ok(result.reasons.some((reason) => reason.includes('does not always show "Goodbye"')), result.reasons.join('; '));
+});
+
 // PLAN.md Phase 4 exit: zero fabricated routes or steps pass the verifier.
 async function plant(fakes: readonly Fake[], found: Fixture, grounding: Decider, report: (line: string) => void): Promise<number> {
   let passed = 0;

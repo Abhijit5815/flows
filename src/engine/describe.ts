@@ -82,14 +82,14 @@ const shown = (act: readonly (GraphNode | undefined)[]) => {
 export const pressing = (text: string): string => (startsWithVerb(text) ? spoken(text) : `press ${text}`);
 
 // A UI step's action as data: the fields a form asks for and the button pressed, each with a selector a test tool can
-// use as is ([name="email"]; Playwright's role=button[name="Sign in"]).
+// use as is ([name="email"], or [id="email"] for a field that has no name; Playwright's role=button[name="Sign in"]).
 export function actionOf(act: readonly GraphNode[]): Flow['steps'][number]['action'] {
   const [first] = act;
   if (first?.kind !== 'form' && first?.kind !== 'action') return undefined;
   const text = shown(act);
   return {
     kind: first.kind === 'form' ? 'submit' : 'click',
-    fields: first.kind === 'form' ? first.attrs.fields.map((name) => ({ name, selector: `[name="${name}"]` })) : [],
+    fields: first.kind === 'form' ? first.attrs.fields.map((name) => ({ name, selector: `[${first.attrs.ids?.includes(name) ? 'id' : 'name'}="${name}"]` })) : [],
     ...(text === undefined ? {} : { button: { text, selector: `role=button[name="${text.replace(/"/g, '\\"')}"]` } }),
   };
 }

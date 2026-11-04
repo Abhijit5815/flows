@@ -92,6 +92,50 @@ test('a form component used on two pages with different actions is two flows', a
   assert.deepEqual(flows.find((flow) => flow.steps[0].kind === 'subflow')?.steps[0].subflow_ref, login?.id, 'the Log-in step is the form on /login');
 });
 
+test('a controlled field with an id and no name (the app\'s own <Input id="email" />) is still a field of the form', async () => {
+  const dir = join(tmp, 'id-fields');
+  const write = (file: string, text: string) => {
+    mkdirSync(join(dir, file, '..'), { recursive: true });
+    writeFileSync(join(dir, file), text);
+  };
+  write('package.json', JSON.stringify({ dependencies: { next: '^14.2.5' } }));
+  write('tsconfig.json', JSON.stringify({ compilerOptions: { jsx: 'preserve', strict: true } }));
+  write('app/fields.tsx', "export const Input = (props: any) => <input {...props} />;\nexport const PasswordField = (props: any) => <input type=\"password\" {...props} />;\n");
+  write('app/login/form.tsx', "'use client';\nimport { Input, PasswordField } from '../fields';\nexport function LoginForm() {\n  async function submit() { await fetch('/api/login', { method: 'POST' }); }\n  return <form onSubmit={submit}><div id=\"wrapper\"><Input id=\"email\" /><PasswordField id=\"password\" /></div><button type=\"submit\">Log in</button></form>;\n}\n");
+  write('app/login/page.tsx', "import { LoginForm } from './form';\nexport default function Login() {\n  return <LoginForm />;\n}\n");
+  const project = tempProject(join(tmp, 'id-fields-project'));
+  const { graph } = await scanRepo(project, addRepo(project, dir, 'web').config.repos[0]);
+  assert.ok(graph);
+  const form = graph.nodes.find((node) => node.kind === 'form');
+  assert.deepEqual(form?.attrs.fields, ['email', 'password'], 'the wrapper div\'s id is not a field');
+  assert.deepEqual(form?.kind === 'form' ? form.attrs.ids : undefined, ['email', 'password'], 'they are marked as found by id');
+  const { flows } = addLoginSubflows(candidates(graph).flows, lookup(graph));
+  const press = flows.flatMap((flow) => flow.steps).find((step) => step.action?.kind === 'submit');
+  assert.deepEqual(press?.action?.fields.map((field) => field.selector), ['[id="email"]', '[id="password"]'], 'a test tool finds them by id, not by a name they do not have');
+});
+
+test('a page asserts the headings it always shows: from its components too, never one in a condition, a loop or built from data', async () => {
+  const dir = join(tmp, 'headings');
+  const write = (file: string, text: string) => {
+    mkdirSync(join(dir, file, '..'), { recursive: true });
+    writeFileSync(join(dir, file), text);
+  };
+  write('package.json', JSON.stringify({ dependencies: { next: '^14.2.5' } }));
+  write('tsconfig.json', JSON.stringify({ compilerOptions: { jsx: 'preserve', strict: true } }));
+  write('app/hero.tsx', "export function Hero() {\n  return <header><h1>Log in to Joe&apos;s Shop</h1><h2>Not a page heading</h2></header>;\n}\n");
+  write('app/page.tsx', "import { Hero } from './hero';\nexport default function Home({ loading, name, items }: any) {\n  return (\n    <main>\n      <Hero />\n      {loading && <h1>Loading</h1>}\n      {loading ? <h1>Wait</h1> : null}\n      <h1>{name}</h1>\n      {items.map((item: any) => <h1 key={item}>Item</h1>)}\n    </main>\n  );\n}\n");
+  write('app/plain/page.tsx', "export default function Plain() {\n  return <p>no heading here</p>;\n}\n");
+  const project = tempProject(join(tmp, 'headings-project'));
+  const { graph } = await scanRepo(project, addRepo(project, dir, 'web').config.repos[0]);
+  assert.ok(graph);
+  const headings = (path: string) => graph.nodes.flatMap((node) => (node.kind === 'page' && node.attrs.path === path ? [node.attrs.headings] : []))[0];
+  assert.deepEqual(headings('/'), ["Log in to Joe's Shop"]);
+  assert.equal(headings('/plain'), undefined, 'no heading, no claim');
+  const { flows } = addLoginSubflows(candidates(graph).flows, lookup(graph));
+  const check = flows.find((flow) => flow.name === 'User can view the home page')?.steps[0].check;
+  assert.deepEqual(check?.kind === 'ui' ? check.text : undefined, ["Log in to Joe's Shop"]);
+});
+
 // From the bug-hunting pass on unseen Next.js apps (saas-starter, commerce, taxonomy, the postgres-nextauth template,
 // next-saas-stripe-starter): what a button says, read the way a person reads it, and named "User can ...".
 test('flows are named from what buttons say: states, icons, Title Case, several buttons in one form', async () => {

@@ -132,6 +132,7 @@ button:disabled, input:disabled, select:disabled { opacity: 0.5; cursor: not-all
 .button-row > .inline + .inline { margin-left: 10px; } /* Category, Priority, Enabled read as separate controls */
 .field { display: block; color: var(--muted); font-size: 12px; margin: 10px 0 2px; }
 .inline { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); }
+.panel .inline:has(> input:not([type])) { display: flex; margin: 4px 0; } /* a text field takes the panel's width */
 .panel input:not([type]), .panel textarea { width: 100%; }
 .problem { color: var(--bad); }
 .notes { padding-left: 18px; margin: 8px 0 0; display: grid; gap: 4px; }
@@ -148,3 +149,25 @@ button:disabled, input:disabled, select:disabled { opacity: 0.5; cursor: not-all
 .palette li { display: flex; align-items: baseline; gap: 6px; overflow-wrap: anywhere; }
 .palette button { padding: 0 8px; }
 button[role="tab"][aria-selected="true"] { border-color: var(--accent); color: var(--accent); }
+
+/* Since the last scan, and the table view of a long list of flows. */
+.scanbar { flex-basis: 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 16px; margin: 0; font-size: 12.5px; }
+.scan-repo { margin-right: 14px; font-family: var(--mono); font-size: 11.5px; }
+.badge.new { color: var(--accent); border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); font-weight: 600; }
+.table-wrap { height: 100%; overflow: auto; display: flex; flex-direction: column; }
+.table-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; padding: 8px 16px; background: var(--surface); border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 1; }
+.table-tools input { width: min(360px, 100%); }
+table.flows { border-collapse: collapse; width: 100%; font-size: 13px; }
+table.flows th { text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); padding: 6px 10px; border-bottom: 1px solid var(--line); background: var(--surface); position: sticky; top: 45px; cursor: pointer; white-space: nowrap; }
+table.flows td { padding: 6px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+table.flows tr.row { cursor: pointer; }
+table.flows tr.row:hover { background: var(--surface-2); }
+table.flows tr.row.is-selected { background: color-mix(in srgb, var(--accent) 10%, var(--surface)); box-shadow: inset 3px 0 0 var(--accent); }
+table.flows tr.row.is-off td { opacity: 0.6; }
+table.flows .where { color: var(--muted); font-family: var(--mono); font-size: 11.5px; overflow-wrap: anywhere; }
+.view-toggle { display: flex; gap: 0; }
+.view-toggle button:first-child { border-radius: 6px 0 0 6px; }
+.view-toggle button:last-child { border-radius: 0 6px 6px 0; margin-left: -1px; }
+.badge.qa-ready { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 45%, transparent); }
+.badge.qa-needs-work { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 45%, transparent); }
+.badge.qa-not-testable { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 45%, transparent); }

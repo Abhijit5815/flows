@@ -1,6 +1,8 @@
 import { Background, Controls, Handle, MarkerType, Position, ReactFlow, type Edge, type Node, type NodeChange, type NodeProps } from '@xyflow/react';
 import { useMemo, useState, type CSSProperties } from 'react';
 import type { Category } from '../../model/category.ts';
+import { ChangeBadge } from './changes.tsx';
+import { QaBadge } from './qa.tsx';
 import { NO_ROUTE, NOT_OBSERVED, ROLE_NOT_EXPLORED, STALE, unstable, whereOf, type Item } from './model.ts';
 
 // PLAN.md Phase 5: nodes are steps, lanes are categories. Each flow is a row in its category's lane: a header
@@ -43,8 +45,11 @@ function LaneNode({ data }: NodeProps<Node<LaneData, 'lane'>>) {
 }
 
 // The badges a flow card shows, by their text; the card and the row height both use this list.
-function flowBadges({ flow }: Item): string[] {
+function flowBadges(item: Item): string[] {
+  const { flow } = item;
   return [
+    ...(item.change === undefined ? [] : [item.change]),
+    ...(item.qa === undefined ? [] : [item.qa.verdict]),
     flow.status,
     flow.kind.toUpperCase(),
     flow.confidence.toFixed(2),
@@ -67,6 +72,8 @@ function FlowNode({ data }: NodeProps<Node<FlowData, 'flow'>>) {
   return (
     <div className={`flow-node${data.selected ? ' is-selected' : ''}${flow.enabled ? '' : ' is-off'}`}>
       <div className="flow-badges">
+        {data.item.change === undefined ? null : <ChangeBadge item={data.item} />}
+        {data.item.qa === undefined ? null : <QaBadge qa={data.item.qa} />}
         <span className={`pill status-${flow.status}`}>{flow.status}</span>
         <span className="badge">{flow.kind.toUpperCase()}</span>
         <span className="badge" title="confidence">{flow.confidence.toFixed(2)}</span>

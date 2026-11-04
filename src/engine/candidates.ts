@@ -47,7 +47,7 @@ export function draft(kind: Flow['kind'], key: string, steps: DraftStep[], graph
 }
 
 // The steps the engine writes, shared by generated flows and by the flows a person draws or describes.
-export const openStep = (page: GraphNode): DraftStep => ({ kind: 'ui', claim: template('ui', [page]), evidence: [evidenceOf(page)], check: { kind: 'ui', page: label(page), evidence: [evidenceOf(page)] }, enabled: true });
+export const openStep = (page: GraphNode): DraftStep => ({ kind: 'ui', claim: template('ui', [page]), evidence: [evidenceOf(page)], check: { kind: 'ui', page: label(page), ...(page.kind === 'page' && page.attrs.headings !== undefined ? { text: page.attrs.headings } : {}), evidence: [evidenceOf(page)] }, enabled: true });
 
 // A form or click that runs an action: where the action redirects is the check (when it names one place), and the
 // messages it returns are the errors.

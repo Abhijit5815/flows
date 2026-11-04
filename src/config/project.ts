@@ -30,6 +30,15 @@ const AnthropicSchema = z.object({
   effort: z.enum(['low', 'medium', 'high', 'xhigh', 'max']).default('low'),
 });
 
+// Google's Gemini through its own API. The key is read from the variable named here, never stored.
+const GeminiSchema = z.object({
+  provider: z.literal('gemini'),
+  price_per_mtok: PriceSchema.optional(),
+  model: z.string().min(1).default('gemini-3.5-flash'), // Google retires models for new users; change it here or on the page if this one goes
+  api_key_env: z.string().min(1).default('GEMINI_API_KEY'),
+  timeout_ms: z.int().positive().default(120_000),
+});
+
 // Inside a coding assistant: Flows saves its AI jobs for the assistant (`flows jobs`, `flows answer`), calls nothing.
 const AssistantSchema = z.object({ provider: z.literal('assistant') });
 
@@ -64,7 +73,7 @@ export const ProjectConfigSchema = z.object({
   }),
   // Default: a free local model, so nothing leaves the machine and no API key or billing is needed.
   llm: z
-    .discriminatedUnion('provider', [AnthropicSchema, OpenAiCompatibleSchema, AssistantSchema])
+    .discriminatedUnion('provider', [AnthropicSchema, OpenAiCompatibleSchema, GeminiSchema, AssistantSchema])
     .prefault({ provider: 'openai-compatible', base_url: 'http://localhost:11434/v1', model: 'llama3.2:3b' }),
   embedder: z.discriminatedUnion('provider', [LocalEmbedderSchema, OpenAiCompatibleSchema]).prefault({ provider: 'local' }),
   // drift_warn: the share of the current Decider's decisions people overrode above which `flows eval` warns (Phase 7).
@@ -104,6 +113,7 @@ export type Repo = ProjectConfig['repos'][number];
 export type LlmConfig = ProjectConfig['llm'];
 export type EmbedderConfig = ProjectConfig['embedder'];
 export type OpenAiCompatibleConfig = z.infer<typeof OpenAiCompatibleSchema>;
+export type GeminiConfig = z.infer<typeof GeminiSchema>;
 export type Threshold = z.infer<typeof ThresholdSchema>;
 export type ExplorerConfig = ProjectConfig['explorer'];
 
@@ -179,6 +189,13 @@ export function setCategories(project: Project, list: readonly Category[]): Proj
   if (kept === undefined || kept.name !== fallback?.name || kept.color !== fallback.color || kept.editable) throw new ConfigError(`the "${FALLBACK_CATEGORY_ID}" category can't be removed or edited`);
   if (new Set(list.map((category) => category.id)).size !== list.length) throw new ConfigError('category ids must be unique');
   const updated = validate(project.root, { ...project.raw, categories: list });
+  write(updated);
+  return updated;
+}
+
+// The project's LLM, as chosen on the review page.
+export function setLlm(project: Project, llm: object): Project {
+  const updated = validate(project.root, { ...project.raw, llm });
   write(updated);
   return updated;
 }

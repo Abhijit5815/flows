@@ -12,7 +12,9 @@ export function stepDetails(step: Flow['steps'][number]): string[] {
   const fields = body?.fields.map((field) => `${field.name}${field.required ? '' : '?'}: ${[field.type, ...field.rules].join(' ')}`) ?? [];
   const action = step.action;
   const session = step.session;
+  const heading = step.check?.kind === 'ui' && step.check.text !== undefined ? `heading: ${step.check.text.map((text) => `"${text}"`).join(', ')}` : undefined;
   return [
+    ...(heading === undefined ? [] : [heading]),
     ...(action === undefined ? [] : [`action: ${[...(action.fields.length > 0 ? [`fill ${action.fields.map((field) => field.selector).join(', ')}`] : []), ...(action.button === undefined ? [] : [`press ${action.button.selector}`])].join('; ') || action.kind}`]),
     ...(step.params === undefined ? [] : [`params ${step.params.map((param) => `${param.name}: ${param.type}${param.example === undefined ? '' : ` (e.g. ${param.example})`}`).join(', ')}`]),
     ...(session === undefined ? [] : [`session: ${session.header === undefined ? `cookie ${session.cookie ?? '?'}` : `${session.header}: ${session.scheme === undefined ? '' : `${session.scheme} `}<${session.token ?? 'token'}>`}`]),

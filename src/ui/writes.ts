@@ -1,11 +1,13 @@
 import { resolve } from 'node:path';
 import { z } from 'zod';
-import { setCategories, type Project, type Repo } from '../config/project.ts';
+import { setCategories, setLlm, LoginNameSchema, type LlmConfig, type Project, type Repo } from '../config/project.ts';
 import { loadEdits, OverrideSchema, saveAdded, saveOverride, type OverridePatch } from '../engine/edits.ts';
 import { refreshFlows, type EngineDeps } from '../engine/engine.ts';
-import { loadFlows } from '../engine/store.ts';
+import { qaFlows } from '../engine/qa.ts';
+import { loadFlows, saveFlows } from '../engine/store.ts';
 import type { Graph } from '../graph/schema.ts';
 import { loadGraph } from '../graph/store.ts';
+import type { LlmGateway } from '../llm/gateway.ts';
 import { CategorySchema } from '../model/category.ts';
 import { FlowSchema } from '../model/flow.ts';
 import { addRule, FEEDBACK_KINDS, now } from '../rules/learned.ts';
@@ -27,9 +29,26 @@ export const BulkBody = z.object({
   verdict: z.enum(['correct', 'wrong', 'never']).optional(),
 });
 export const DrawBody = z.object({ repo: RepoKey, nodes: z.array(z.string().min(1)).min(1).max(50), name: z.string().trim().min(1).max(200) });
+// "Mark as seen": these flows stop counting as new or changed.
+export const SeenBody = z.object({ flows: z.array(z.object({ repo: RepoKey, flow: z.string().min(1) })).min(1).max(5000) });
+// "Check with AI": the flows to review, and nothing else.
+export const QaBody = z.object({ flows: z.array(z.object({ repo: RepoKey, flow: z.string().min(1) })).min(1).max(5000) });
 export const DescribeBody = z.object({ repo: RepoKey, text: z.string().trim().min(3).max(500) });
 // "Walk this in the inspector": a flow to walk, or nothing for a free walk (a role no run has covered).
-export const InspectBody = z.object({ repo: RepoKey.optional(), flow: z.string().min(1).max(200).optional() }).refine((walk) => (walk.repo === undefined) === (walk.flow === undefined), { message: 'give both repo and flow, or neither' });
+// url: where to open it (else where the newest explorer run started); as: a saved login to start signed in as.
+export const LiveUrl = z.url().refine((url) => URL.canParse(url) && /^https?:$/.test(new URL(url).protocol), { message: 'give an http or https address' });
+export const InspectBody = z
+  .object({ repo: RepoKey.optional(), flow: z.string().min(1).max(200).optional(), url: LiveUrl.optional(), as: LoginNameSchema.optional() })
+  .refine((walk) => (walk.repo === undefined) === (walk.flow === undefined), { message: 'give both repo and flow, or neither' });
+export const ExploreBody = z.object({ url: LiveUrl, as: LoginNameSchema.optional(), headed: z.boolean().optional() });
+// The AI that names flows: a model Flows calls, or the coding assistant that answers its jobs. Keys never travel
+// here: Anthropic reads its own credentials, and a compatible server's key is named by the variable that holds it.
+export const LlmBody = z.discriminatedUnion('provider', [
+  z.object({ provider: z.literal('assistant') }),
+  z.object({ provider: z.literal('anthropic'), model: z.string().trim().min(1).max(100).optional() }),
+  z.object({ provider: z.literal('gemini'), model: z.string().trim().min(1).max(100).optional(), api_key_env: z.string().trim().min(1).max(100).optional() }),
+  z.object({ provider: z.literal('openai-compatible'), base_url: z.url(), model: z.string().trim().min(1).max(100), api_key_env: z.string().trim().min(1).max(100).optional() }),
+]);
 export const CategoriesBody = z.object({ categories: z.array(CategorySchema).min(1), merges: z.array(z.object({ from: z.string().min(1), to: z.string().min(1) })).default([]) });
 
 // A request the page sent that can't be carried out as asked; the server answers 400 with the message.
@@ -44,9 +63,13 @@ export type Writes = {
   add(body: unknown): Promise<void>;
   bulk(body: unknown): Promise<void>;
   categories(body: unknown): Promise<void>;
+  llm(body: unknown): void;
+  name(): Promise<void>;
+  seen(body: unknown): void;
+  qa(body: unknown): Promise<number>;
 };
 
-export function writes(start: Project, deps: EngineDeps): Writes {
+export function writes(start: Project, deps: EngineDeps, gatewayFor: (config: LlmConfig) => LlmGateway): Writes {
   let project = start;
   const repoOf = (key: string): Repo => {
     const repo = project.config.repos.find((candidate) => `${candidate.role}:${candidate.path}` === key);
@@ -143,5 +166,35 @@ export function writes(start: Project, deps: EngineDeps): Writes {
       }
       await refresh(project.config.repos);
     },
+    llm(body) {
+      project = setLlm(project, parseOrThrow(LlmBody, body, 'AI settings', BadRequest));
+      deps.llm.use(gatewayFor(project.config.llm));
+    },
+    seen(body) {
+      const { flows } = parseOrThrow(SeenBody, body, 'seen flows', BadRequest);
+      for (const key of new Set(flows.map(({ repo }) => repo))) {
+        const repo = repoOf(key);
+        const set = loadFlows(project, repo);
+        if (set?.since === undefined) continue;
+        const ids = new Set(flows.filter((own) => own.repo === key).map((own) => own.flow));
+        const drop = <T>(record: Record<string, T>) => Object.fromEntries(Object.entries(record).filter(([id]) => !ids.has(id)));
+        saveFlows(project, repo, { ...set, since: { ...set.since, changes: drop(set.since.changes), replaces: drop(set.since.replaces) } });
+      }
+    },
+    // The AI's QA review of the given flows, kept with each repo's flows. A flow it could not be asked about stays unreviewed.
+    async qa(body) {
+      const { flows } = parseOrThrow(QaBody, body, 'QA request', BadRequest);
+      let done = 0;
+      for (const key of new Set(flows.map(({ repo }) => repo))) {
+        const repo = repoOf(key);
+        const set = loadFlows(project, repo);
+        if (set === undefined) throw new BadRequest(`${repo.role} ${repo.path} has no flows yet; run "flows scan"`);
+        done += await qaFlows(set, new Set(flows.filter((own) => own.repo === key).map((own) => own.flow)), deps.llm, now());
+        saveFlows(project, repo, set);
+      }
+      return done;
+    },
+    // Builds every repo's flows again: the LLM names what nobody named, and the answers it already gave come from its cache.
+    name: () => refresh(project.config.repos),
   };
 }

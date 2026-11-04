@@ -1,18 +1,19 @@
 import { ProviderError } from './errors.ts';
 
-export type PostOptions = { apiKey?: string; timeoutMs: number };
+// headers: the provider's own way to carry a key, when it is not a Bearer token.
+export type PostOptions = { apiKey?: string; timeoutMs: number; headers?: Record<string, string> };
 
 export const joinUrl = (base: string, path: string): string =>
   new URL(path, base.endsWith('/') ? base : `${base}/`).toString();
 
 // POST JSON and return the parsed reply. Every failure becomes a ProviderError naming the URL, never the key.
-export async function postJson(url: string, body: unknown, { apiKey, timeoutMs }: PostOptions): Promise<unknown> {
+export async function postJson(url: string, body: unknown, { apiKey, timeoutMs, headers }: PostOptions): Promise<unknown> {
   let status: number | undefined;
   let text: string;
   try {
     const response = await fetch(url, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}) },
+      headers: { 'content-type': 'application/json', ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}), ...headers },
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(timeoutMs),
     });

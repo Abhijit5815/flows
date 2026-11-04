@@ -16,9 +16,10 @@ import { NLI_MODEL } from '../decider/entailment.ts';
 import { launchBrowser } from '../live/browser.ts';
 import { refreshFlows, verdictsOf, type EngineDeps } from '../engine/engine.ts';
 import { exportFlows } from '../engine/export.ts';
+import { qaFlows } from '../engine/qa.ts';
 import { learnedExamples, withLearned } from '../engine/learning.ts';
 import { OptionalLlm } from '../engine/llm.ts';
-import { loadFlows, type FlowSet } from '../engine/store.ts';
+import { loadFlows, saveFlows, type FlowSet } from '../engine/store.ts';
 import { stepDetails, stepLine } from '../engine/views.ts';
 import { NO_ROUTE, STALE } from '../model/tags.ts';
 import type { Graph } from '../graph/schema.ts';
@@ -28,12 +29,9 @@ import { evaluate, loadKeys, type Score } from '../ingest/eval.ts';
 import { listFiles } from '../ingest/files.ts';
 import { isSource } from '../ingest/match.ts';
 import { CoverageSchema, scanRepo } from '../ingest/pipeline.ts';
-import { explore } from '../live/explorer.ts';
-import { envCredentials, loginByHand, sessionFile } from '../live/login.ts';
+import { loginByHand, sessionFile } from '../live/login.ts';
 import { crossCheckLines, runLines } from '../live/report.ts';
-import { runDir, saveRun } from '../live/run.ts';
-import { sourceTexts } from '../live/texts.ts';
-import { walkInInspector } from '../live/walk.ts';
+import { exploreProject, walkInInspector } from '../live/walk.ts';
 import { answerJob, loadJobs } from '../llm/assistant.ts';
 import { createGateway } from '../llm/create.ts';
 import { draftRule } from '../rules/draft.ts';
@@ -71,8 +69,11 @@ const USAGE = `usage: flows <command> [--project <dir>]
   inspect [<url>] [--as <name>] [--flow <id>]   use the app by hand in a browser window (the inspector: nothing is
                                            blocked, what you do is recorded and cross-checked); point at anything
                                            to see what source knows; --flow walks one flow, ticking its steps
-  export [--out <file>]                    the reviewed flows as JSON for a test tool: every enabled flow in an
-                                           enabled category, with the subflows they use
+  export [--out <file>] [--changed]        the reviewed flows as JSON for a test tool: every enabled flow in an
+                                           enabled category, with the subflows they use; --changed: only those the
+                                           last scan found new or changed
+  qa [--changed]                           an AI reviews each flow as a QA engineer would (specific results? end to end?);
+                                           --changed: only the flows new or changed since the last scan. Advice only.
   jobs [--json]                            with "llm": {"provider": "assistant"}: the AI jobs waiting for your
                                            coding assistant (names, descriptions, unknown categories, rule drafts)
   answer <job-id> '<json>'                 the assistant's answer to a job; the next scan checks it and uses it
@@ -113,6 +114,7 @@ const parsed = (() => {
     out: { type: 'string' },
     as: { type: 'string' },
     headed: { type: 'boolean', default: false },
+    changed: { type: 'boolean', default: false },
     flow: { type: 'string' },
   },
 });
@@ -197,6 +199,18 @@ function engineDeps(project: Project, embedder: ReturnType<typeof createEmbeddin
   };
 }
 
+// What this scan found against the last one: the commit, and the flows that are new, changed or renamed.
+function sinceLines(set: FlowSet): string[] {
+  const since = set.since;
+  if (since === undefined) return [];
+  const at = since.commit === null ? 'not a git repo' : `${since.commit.slice(0, 8)}${since.branch === null ? '' : ` on ${since.branch}`}${since.dirty ? ' + uncommitted changes' : ''}`;
+  const from = since.previous_commit === null || since.previous_commit === since.commit ? '' : ` (was ${since.previous_commit.slice(0, 8)}${since.files_changed === null ? '' : `, ${since.files_changed} files changed`})`;
+  const marks = Object.values(since.changes);
+  const count = (kind: string) => marks.filter((mark) => mark === kind).length;
+  const renamed = Object.keys(since.replaces).length;
+  return [`  code at ${at}${from}`, since.first ? '  first scan: every flow is new to you; changes show from the next scan' : `  since the last scan: ${count('new')} new, ${count('changed')} changed${renamed === 0 ? '' : ` (${renamed} renamed)`}; "flows export --changed" writes only these`];
+}
+
 function flowSummary(set: FlowSet): string {
   const count = (status: string) => set.flows.filter((flow) => flow.status === status).length;
   const held = set.flows.filter((flow) => flow.destructive !== 'no' && !flow.enabled && flow.status !== 'rejected').length;
@@ -238,9 +252,10 @@ async function scanAll(project: Project): Promise<void> {
     scanned.push({ repo, graph });
   }
   for (const { repo, graph } of scanned) {
-    const set = await refreshFlows(project, repo, graph, engine);
+    const set = await refreshFlows(project, repo, graph, engine, true);
     console.log(`${repo.role}  ${repo.path}`);
     console.log(flowSummary(set));
+    for (const line of sinceLines(set)) console.log(line);
     for (const flow of set.flows.filter((candidate) => candidate.tags.includes(NO_ROUTE))) console.log(`  no backend route: ${flow.id}  ${flow.name}: ${(set.reasons[flow.id] ?? []).filter((reason) => reason.endsWith('no route of the API repos answers it')).join('; ')}`);
     for (const note of set.notes) console.log(`    ${note}`);
     for (const flow of set.flows.filter((candidate) => candidate.tags.includes(STALE))) console.log(`  stale: ${flow.id}  ${flow.name}: ${(set.reasons[flow.id] ?? []).filter((reason) => reason.startsWith('stale')).join('; ')}`);
@@ -403,30 +418,12 @@ function loginName(): string | undefined {
 
 // `flows explore`: one read-only run, kept in the cache, then every scanned repo's flows again with the cross-check.
 async function exploreLive(project: Project, url: string): Promise<void> {
-  const name = loginName();
-  const credentials = name === undefined ? undefined : envCredentials(project.config.explorer, name);
-  const saved = name === undefined ? undefined : sessionFile(project, name);
-  const storageState = credentials === undefined && saved !== undefined && existsSync(saved) ? saved : undefined;
-  if (name !== undefined && credentials === undefined && storageState === undefined) {
-    throw new FlowsError(`no saved session or env credentials for "${name}": run "flows login ${url} --as ${name}", or set explorer.logins.${name} in the config`);
-  }
-  const graphs = project.config.repos.flatMap((repo) => {
-    const graph = loadGraph(project, repo);
-    return graph === undefined ? [] : [{ repo, graph }];
-  });
-  if (graphs.length === 0) console.log('no repo is scanned yet: pages are grouped by guessed ids, and nothing is cross-checked; run "flows scan" first');
-  const pages = graphs.flatMap(({ graph }) => graph.nodes.flatMap((node) => (node.kind === 'page' ? [node.attrs.path] : [])));
   const embedder = createEmbeddingProvider(project.config.embedder, join(storageDir(project), 'models'), progress());
   const engine = engineDeps(project, embedder);
-  console.log(`exploring ${url} ${name === undefined ? 'signed out' : `as ${name}`}; it only reads: every write and WebSocket is blocked`);
-  const run = await explore(
-    { url, session: name ?? null, storageState, credentials, saveSessionTo: credentials === undefined ? undefined : saved, pages, source: sourceTexts(graphs.map(({ graph }) => graph)), headless: !values.headed },
-    { decider: engine.decider, llm: engine.llm, config: project.config.explorer, runDir: (id) => runDir(project, id), log: (line) => console.log(line) },
-  );
-  saveRun(project, run);
+  const { run, sets, noRepoScanned } = await exploreProject(project, { url, as: loginName(), headed: values.headed }, engine, (line) => console.log(line));
+  if (noRepoScanned) console.log('no repo is scanned yet: pages are grouped by guessed ids, and nothing is cross-checked; run "flows scan" first');
   for (const line of runLines(run)) console.log(line);
-  for (const { repo, graph } of graphs) {
-    const set = await refreshFlows(project, repo, graph, engine);
+  for (const { repo, set } of sets) {
     console.log(`${repo.role}  ${repo.path}`);
     for (const line of crossCheckLines(set)) console.log(line);
   }
@@ -618,7 +615,7 @@ async function run(): Promise<void> {
       const project = withRepos(loadProject(root));
       const sets = project.config.repos.map((repo) => loadFlows(project, repo));
       if (sets.some((set) => set === undefined)) throw new FlowsError('some repos have no flows yet; run "flows scan"');
-      const exported = exportFlows(sets.flatMap((set) => set ?? []), categories(project.config));
+      const exported = exportFlows(sets.flatMap((set) => set ?? []), categories(project.config), values.changed);
       if (values.out === undefined) console.log(JSON.stringify(exported, null, 2));
       else {
         try {
@@ -658,6 +655,24 @@ async function run(): Promise<void> {
       }
       return;
     }
+    case 'qa': {
+      const project = withRepos(loadProject(root));
+      const embedder = createEmbeddingProvider(project.config.embedder, join(storageDir(project), 'models'), progress());
+      const engine = engineDeps(project, embedder);
+      for (const repo of project.config.repos) {
+        const set = loadFlows(project, repo);
+        if (set === undefined) throw new FlowsError(`${repo.role} ${repo.path} has no flows yet; run "flows scan"`);
+        const ids = new Set(set.flows.filter((flow) => flow.status !== 'rejected' && (!values.changed || set.since?.changes[flow.id] !== undefined)).map((flow) => flow.id));
+        const done = await qaFlows(set, ids, engine.llm, now());
+        saveFlows(project, repo, set);
+        const reviews = [...ids].flatMap((id) => (set.qa[id] === undefined ? [] : [{ flow: set.flows.find((flow) => flow.id === id), qa: set.qa[id] }]));
+        const count = (verdict: string) => reviews.filter((review) => review.qa.verdict === verdict).length;
+        console.log(`${repo.role}  ${repo.path}: ${done} reviewed now; ${count('ready')} ready, ${count('needs-work')} need work, ${count('not-testable')} not testable`);
+        for (const { flow, qa } of reviews.filter((review) => review.qa.verdict !== 'ready')) console.log(`  ${qa.verdict}  ${flow?.id}  ${flow?.name}${qa.gaps.length === 0 ? '' : `: ${qa.gaps.join('; ')}`}`);
+      }
+      if (engine.llm.pending > 0) console.log(`${engine.llm.pending} AI job(s) wait for your coding assistant: run "flows jobs", answer them, then run qa again`);
+      return;
+    }
     case 'jobs':
       return showJobs(loadProject(root));
     case 'answer': {
@@ -672,7 +687,8 @@ async function run(): Promise<void> {
       if (!Number.isInteger(port) || port < 0 || port > 65535) throw new FlowsError(`--port must be a port number, not "${values.port}"`);
       const project = loadProject(root);
       const embedder = createEmbeddingProvider(project.config.embedder, join(storageDir(project), 'models'), progress());
-      const ui = await startUi(project, { ...engineDeps(project, embedder), embedder }, port);
+      const trace = new JsonlTraceSink(traceFile(projectDataDir(project)));
+      const ui = await startUi(project, { ...engineDeps(project, embedder), embedder, gatewayFor: (config) => createGateway(config, trace, jobsFile(project)) }, port);
       console.log(`review page: ${ui.url}  (Ctrl-C stops it)`);
       openBrowser(ui.url);
       return;

@@ -75,6 +75,7 @@ changes are saved in each repo's `.flows/` folder, so they go into version contr
 | `flows scan` | Parse the repos and build their flows (unchanged files are cached). |
 | `flows ui` | Open the review page. |
 | `flows show flows` | Print the flows, with the evidence for every step. |
+| `flows export --format plan --out specs/plan.md` | The same flows as the Markdown test plan Playwright's planner and generator agents read (`npx playwright init-agents`): a scenario per flow, with selectors and how far to trust them, example values, expected results and error cases. |
 | `flows export --out flows.json` | Write the reviewed flows as JSON (see below). `--changed`: only new or updated ones. |
 | `flows qa [--changed]` | An AI reviews each flow as a QA engineer would and lists the gaps. |
 | `flows jobs` / `flows answer` | The AI jobs waiting for your coding assistant, and its answers. |

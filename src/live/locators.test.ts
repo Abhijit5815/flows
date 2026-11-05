@@ -115,3 +115,26 @@ test('four look-alike clicks on one page fold into one flow, fewer stay as they 
   assert.match(out[0].flow.steps[1].claim, /^Click one of 4 look-alike controls: "a", "b", "c", "d"$/);
   assert.equal(foldClicks(four.slice(0, 3)).length, 3);
 });
+
+test('examples use the first allowed value, leave out what could not be read, and a control seen on another page is not borrowed', async () => {
+  const { exampleValue, withExamples } = await import('../engine/examples.ts');
+  const f = (name: string, type: string, rules: string[]) => ({ name, type, required: true, rules });
+  assert.equal(exampleValue(f('category', 'enum', ["enum(['tech', 'food'])"])), 'tech');
+  assert.equal(exampleValue(f('category', 'enum', ['enum(…)'])), undefined);
+  assert.deepEqual(exampleValue(f('criteria', 'record', ['record(z.unknown())'])), {});
+  assert.equal(String(exampleValue(f('description', 'string', ['trim', 'min(LIMITS.MIN)']))).length >= 40, true);
+  const api = { id: 'a', steps: [{ id: 's', kind: 'api', check: null, request: { method: 'POST', path: '/x', body: { schema: 's', evidence: [], fields: [f('title', 'string', []), f('category', 'enum', ['enum(…)'])] } } }] } as unknown as Flow;
+  assert.deepEqual(withExamples([api])[0].steps[0].request?.body?.example_missing, ['category']);
+  const elsewhere = { states: [{ path: '/signup', forms: [{ fields: [{ name: 'email', selector: 'testid:signup-email' }], submit: null }], buttons: [] }], actions: [], requests: [] } as unknown as Run;
+  const [out] = annotate([flow], [elsewhere]);
+  assert.equal(out.steps[1].action?.fields[0].selector, '[name="email"]', 'the login keeps its own selector');
+  assert.equal(out.steps[1].action?.fields[0].locator, 'source');
+});
+
+test('example text carries the project marker, but a password and an email do not', async () => {
+  const { exampleValue } = await import('../engine/examples.ts');
+  const f = (name: string, type: string, rules: string[]) => ({ name, type, required: true, rules });
+  assert.equal(exampleValue(f('title', 'string', ['min(3)']), 'Test Flows '), 'Test Flows test');
+  assert.equal(String(exampleValue(f('password', 'string', ['min(8)']), 'Test Flows ')).startsWith('Passw0rd'), true);
+  assert.equal(exampleValue(f('email', 'string', ['email']), 'Test Flows '), 'test.user@example.com');
+});

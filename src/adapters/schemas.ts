@@ -25,7 +25,7 @@ function fieldOf(name: string, value: Node): Field {
     const callee = base.getExpression();
     if (!Node.isPropertyAccessExpression(callee)) break;
     const args = base.getArguments().map((arg) => arg.getText().replace(/\s+/g, ' ')).join(', ');
-    chain.unshift(args === '' ? callee.getName() : args.length <= 60 ? `${callee.getName()}(${args})` : `${callee.getName()}(…)`);
+    chain.unshift(args === '' ? callee.getName() : args.length <= (callee.getName() === 'enum' ? 400 : 60) ? `${callee.getName()}(${args})` : `${callee.getName()}(…)`);
     base = callee.getExpression();
   }
   // From z the first link is the type (string, enum([...])); otherwise the base is another schema, used as the type.

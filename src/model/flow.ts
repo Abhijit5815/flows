@@ -58,7 +58,7 @@ export const StepSchema = z
         method: z.enum(HTTP_METHODS),
         path: z.string().startsWith('/'),
         // example: export only, a body that passes the rules (engine/examples.ts).
-        body: z.object({ schema: z.string().min(1), fields: z.array(FieldSchema).min(1), evidence: EvidenceListSchema, example: z.record(z.string(), z.unknown()).optional() }).optional(),
+        body: z.object({ schema: z.string().min(1), fields: z.array(FieldSchema).min(1), evidence: EvidenceListSchema, example: z.record(z.string(), z.unknown()).optional(), example_missing: z.array(z.string()).optional() }).optional(),
       })
       .optional(),
     evidence: EvidenceListSchema,

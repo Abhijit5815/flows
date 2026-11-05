@@ -11,7 +11,7 @@ export type FlowExport = { schema_version: 0; exported: string; base_url: string
 // shortcut: two repos of the same role can share a flow id ("Open /"); ids would repeat in the file. Prefix ids
 // with the repo if a project ever registers two web or two api repos.
 // onlyChanged: just the flows the last scan found new or changed (and not yet marked seen), with their subflows.
-export function exportFlows(sets: readonly FlowSet[], categories: readonly Category[], onlyChanged = false, live?: { runs: readonly Run[]; checks: Checks; baseUrl?: string }): FlowExport {
+export function exportFlows(sets: readonly FlowSet[], categories: readonly Category[], onlyChanged = false, live?: { runs: readonly Run[]; checks: Checks; baseUrl?: string; testPrefix?: string }): FlowExport {
   const off = new Set(categories.filter((category) => !category.enabled).map((category) => category.id));
   const flows = sets.flatMap((set) => {
     const byId = new Map(set.flows.map((flow) => [flow.id, flow]));
@@ -28,5 +28,5 @@ export function exportFlows(sets: readonly FlowSet[], categories: readonly Categ
     return [...chosen.values()];
   });
   const runs = live?.runs ?? [];
-  return { schema_version: 0, exported: new Date().toISOString(), base_url: live?.baseUrl ?? runs.at(-1)?.origin ?? null, live_runs: runs.length, flows: annotate(flows, runs, live?.checks) };
+  return { schema_version: 0, exported: new Date().toISOString(), base_url: live?.baseUrl ?? runs.at(-1)?.origin ?? null, live_runs: runs.length, flows: annotate(flows, runs, live?.checks, live?.testPrefix) };
 }

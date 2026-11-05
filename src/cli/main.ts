@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
-import { existsSync, readFileSync, rmSync } from 'node:fs';
-import { basename, join, relative, resolve } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { basename, dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createInterface } from 'node:readline/promises';
 import { parseArgs } from 'node:util';
@@ -32,6 +32,7 @@ import { isSource } from '../ingest/match.ts';
 import { CoverageSchema, scanRepo } from '../ingest/pipeline.ts';
 import { checksOf, loadChecks, saveChecks, verifyLocators } from '../live/locators.ts';
 import { loginByHand, sessionFile } from '../live/login.ts';
+import { planOf } from '../engine/plan.ts';
 import { createdIn } from '../live/ledger.ts';
 import { runReset } from '../live/writes.ts';
 import { loadRuns, runDir } from '../live/run.ts';
@@ -68,6 +69,7 @@ const USAGE = `usage: flows <command> [--project <dir>]
                                            (--repo when two repos have that id)
   runs [--writes] [--drop <origin>]        list the live runs, what the runs that wrote changed, or drop one origin's runs
   cleanup [--yes]                          run explorer.cleanup with the list of what Flows wrote (Flows deletes nothing itself)
+  export --format plan --out specs/plan.md  the flows as the Markdown test plan Playwright's planner and generator agents read
   verify-locators <url> [--as <name>]      open each page the flows act on (read-only) and check every exported selector finds one element
   explore <url> [--as <name>] [--headed]   explore the live app read-only (writes never reach it), then cross-check
            [--allow-writes [--allow-destructive]]  on a test host only (localhost, *.test, explorer.test_hosts): let writes through,
@@ -129,6 +131,7 @@ const parsed = (() => {
     flow: { type: 'string' },
     'base-url': { type: 'string' },
     drop: { type: 'string' },
+    format: { type: 'string' },
     writes: { type: 'boolean', default: false },
     yes: { type: 'boolean', default: false },
     file: { type: 'string' },
@@ -698,7 +701,20 @@ async function run(): Promise<void> {
       const project = withRepos(loadProject(root));
       const sets = project.config.repos.map((repo) => loadFlows(project, repo));
       if (sets.some((set) => set === undefined)) throw new FlowsError('some repos have no flows yet; run "flows scan"');
-      const exported = exportFlows(sets.flatMap((set) => set ?? []), categories(project.config), values.changed, { runs: loadRuns(project), checks: loadChecks(project), ...(values['base-url'] === undefined ? {} : { baseUrl: values['base-url'] }) });
+      const exported = exportFlows(sets.flatMap((set) => set ?? []), categories(project.config), values.changed, { runs: loadRuns(project), checks: loadChecks(project), testPrefix: project.config.explorer.test_prefix, ...(values['base-url'] === undefined ? {} : { baseUrl: values['base-url'] }) });
+      if (values.format === 'plan') {
+        // The flows as the Markdown test plan Playwright's planner/generator agents read (specs/plan.md).
+        const names = new Map(categories(project.config).map((category) => [category.id, category.name]));
+        const plan = planOf(exported.flows.filter((flow) => flow.kind === 'ui' || flow.kind === 'api'), { name: project.config.name, baseUrl: exported.base_url, categories: names });
+        if (values.out === undefined) console.log(plan);
+        else {
+          mkdirSync(dirname(resolve(values.out)), { recursive: true });
+          writeFileSync(resolve(values.out), plan);
+          console.log(`${exported.flows.length} flows written as a Playwright test plan to ${resolve(values.out)}`);
+        }
+        return;
+      }
+      if (values.format !== undefined && values.format !== 'json') throw new FlowsError(`--format is json or plan, not "${values.format}"`);
       if (values.out === undefined) console.log(JSON.stringify(exported, null, 2));
       else {
         try {

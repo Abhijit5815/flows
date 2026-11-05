@@ -66,12 +66,13 @@ export function actionPages(flow: Flow): Map<Step, string> {
 
 type Found = { selector: string };
 
-// What the runs saw of a control, on the pages matching `page` first and anywhere after that. An xpath is not a
+// What the runs saw of a control, on the pages matching `page` and nowhere else (the same name on another page is another
+// control: a signup's email field has a different test id than the login's). An xpath is not a
 // stable answer, so it never replaces what the code gave.
 function seenField(runs: readonly Run[], page: string, name: string): Found | undefined {
   const states = runs.flatMap((run) => run.states);
   const here = pageRegex(page);
-  for (const state of [...states.filter((s) => here.test(s.path)), ...states]) {
+  for (const state of states.filter((s) => here.test(s.path))) {
     const field = state.forms.flatMap((form) => form.fields).find((candidate) => candidate.name === name && candidate.selector !== '' && !candidate.selector.startsWith('xpath:'));
     if (field !== undefined) return { selector: field.selector };
   }
@@ -82,7 +83,7 @@ function seenButton(runs: readonly Run[], page: string, text: string): Found | u
   const states = runs.flatMap((run) => run.states);
   const here = pageRegex(page);
   const same = (candidate: string) => candidate.trim().toLowerCase() === text.trim().toLowerCase();
-  for (const state of [...states.filter((s) => here.test(s.path)), ...states]) {
+  for (const state of states.filter((s) => here.test(s.path))) {
     const controls = [...state.forms.flatMap((form) => (form.submit === null ? [] : [form.submit])), ...state.buttons];
     const found = controls.find((control) => same(control.text) && !control.selector.startsWith('xpath:'));
     if (found !== undefined) return { selector: found.selector };
@@ -93,8 +94,8 @@ function seenButton(runs: readonly Run[], page: string, text: string): Found | u
 // A copy of the flows for a test tool: each action's selectors say how far to trust them, and with live runs each step
 // says whether the running app showed it. A write is blocked for the explorer, so it reads "observed: false" unless a
 // person did it by hand in the inspector.
-export function annotate(flows: readonly Flow[], runs: readonly Run[], checks: Checks = {}): Flow[] {
-  const base = withExamples(flows);
+export function annotate(flows: readonly Flow[], runs: readonly Run[], checks: Checks = {}, prefix = ''): Flow[] {
+  const base = withExamples(flows, prefix);
   const creates = new Map<string, NonNullable<NonNullable<Step['request']>['body']>>();
   const lists = new Set<string>();
   for (const flow of base) {

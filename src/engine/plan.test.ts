@@ -4,7 +4,7 @@ import type { Flow } from '../model/flow.ts';
 import { planOf } from './plan.ts';
 
 const flows = [
-  { id: 'a', name: 'User can sign in', category: 'auth', kind: 'ui', steps: [
+  { id: 'a', name: ' User can sign in', category: 'auth', kind: 'ui', steps: [
     { id: 's1', kind: 'ui', claim: 'Open /login', check: { kind: 'ui', page: '/login' } },
     { id: 's2', kind: 'ui', claim: 'Fill in', check: { kind: 'ui', page: '/account' }, errors: [{ kind: 'ui', message: 'Wrong email or password.' }], action: { kind: 'submit', fields: [{ name: 'email', selector: '[name="email"]', locator: 'verified' }], button: { text: 'Sign in', selector: 'role=button[name="Sign in"]', locator: 'source' } } },
   ] },

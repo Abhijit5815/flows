@@ -190,3 +190,24 @@ test('patterns from unseen apps: wrapped handlers, thrown errors, chained routes
   assert.deepEqual(errors('GET /v1/health'), ['503 the handler: Not ready'], 'sent as text by an inline handler');
   assert.match(found.skipped.find((skip) => skip.name === 'OPTIONS /*')?.reason ?? '', /CORS preflight/);
 });
+
+// A rate limiter's numbers are on its node, one node per call, so a test knows how many requests hit the limit.
+test('a rate limiter keeps its limit and window, one node per use', async () => {
+  const dir = join(tmp, 'limit-app');
+  mkdirSync(join(dir, 'src'), { recursive: true });
+  writeFileSync(join(dir, 'package.json'), JSON.stringify({ dependencies: { express: '^4.19.2' } }));
+  writeFileSync(
+    join(dir, 'src', 'server.ts'),
+    `import express from 'express';
+const app = express();
+function rateLimitPerUser(key: string, limit: number, windowSeconds: number) { return (req: any, res: any, next: any) => { if (limit < 0) return res.status(429).json({ error: 'rate_limited' }); next(); }; }
+app.post('/ideas', rateLimitPerUser('idea-post', 5, 60 * 60 * 24), (req, res) => { res.status(201).json({ ok: true }); });
+app.post('/joins', rateLimitPerUser('join', 3, 3600), (req, res) => { res.status(201).json({ ok: true }); });
+app.listen(3000);
+`,
+  );
+  const project = tempProject(join(tmp, 'limit'));
+  const { graph } = await scanRepo(project, addRepo(project, dir, 'api').config.repos[0]);
+  const limits = graph?.nodes.flatMap((node) => ((node.kind === 'guard' || node.kind === 'middleware') && node.attrs.limit !== undefined ? [node.attrs.limit] : []));
+  assert.deepEqual(limits?.sort(), ['idea-post, 5, 86400', 'join, 3, 3600']);
+});

@@ -12,7 +12,7 @@ function stepLines(step: Step, byId: ReadonlyMap<string, Flow>): string[] {
   const note = step.observed === false ? ' (not seen on the live app)' : '';
   if (step.kind === 'subflow') {
     const target = step.subflow_ref === undefined ? undefined : byId.get(step.subflow_ref);
-    return [`Precondition: ${step.claim}${target === undefined ? '' : `; the scenario "${target.name}" shows how`}`];
+    return [`Precondition: ${step.claim}${target === undefined ? '' : `; the scenario "${target.name.trim()}" shows how`}`];
   }
   const out: string[] = [];
   if (step.kind === 'api' && step.request !== undefined) {
@@ -45,12 +45,12 @@ export function planOf(flows: readonly Flow[], opts: { name: string; baseUrl: st
   const byId = new Map(flows.map((flow) => [flow.id, flow]));
   const groups = new Map<string, Flow[]>();
   for (const flow of flows) groups.set(flow.category, [...(groups.get(flow.category) ?? []), flow]);
-  const lines = [`# ${opts.name} Test Plan`, '', '## Application Overview', '', `${flows.length} flows found by Flows from the app's source${opts.baseUrl === null ? '' : ` and its running copy at ${opts.baseUrl}`}. Selectors say how far to trust them; "not seen on the live app" steps come from source only.`, '', '## Test Scenarios', ''];
+  const lines = [`# ${opts.name} Test Plan`, '', '## Application Overview', '', `${flows.length} flows found by Flows from the app's source${opts.baseUrl === null ? '' : ` and its running copy at ${opts.baseUrl}`}. Selectors say how far to trust them; "not seen on the live app" steps come from source only. Text the page shows is read from source: it can change with the account or the data, so check it on the page before asserting it.`, '', '## Test Scenarios', ''];
   [...groups.entries()].forEach(([category, list], g) => {
     const title = opts.categories.get(category) ?? category;
     lines.push(`### ${g + 1}. ${title}`, '', '**Seed:** `tests/seed.spec.ts`', '');
     list.forEach((flow: Named & Flow, i) => {
-      lines.push(`#### ${g + 1}.${i + 1} ${flow.name}`, '', `**File:** \`tests/${slug(title)}/${slug(flow.name)}.spec.ts\``, '', '**Steps:**');
+      lines.push(`#### ${g + 1}.${i + 1} ${flow.name.trim()}`, '', `**File:** \`tests/${slug(title)}/${slug(flow.name)}.spec.ts\``, '', '**Steps:**');
       flow.steps.flatMap((step) => stepLines(step, byId)).reduce((n, line) => {
         const sub = line.startsWith('  ');
         lines.push(sub ? `   ${line.trim().replace(/^- /, '- ')}` : `  ${n + 1}. ${line}`);

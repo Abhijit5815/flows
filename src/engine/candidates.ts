@@ -91,6 +91,7 @@ export function routeErrors(route: GraphNode, nodes: Lookup): NonNullable<Step['
 export function errorWhen(owner: GraphNode, response: GraphNode, message: string | undefined, route: GraphNode, nodes: Lookup): string | undefined {
   const status = response.kind === 'response' ? response.attrs.status : undefined;
   const schema = nodes.out(route.id, 'validated-by').find((node) => node.kind === 'request-schema');
+  if (status === 429 && (owner.kind === 'guard' || owner.kind === 'middleware') && owner.attrs.limit !== undefined) return `more requests than the limit allows (${owner.attrs.name.replace(/\(.*$/, '')}(${owner.attrs.limit}))`;
   if (owner.kind === 'middleware' && status === 400 && schema !== undefined) return `the body breaks ${label(schema)}`;
   // A guard's own code (if (!token)) says less to a tester than what it checks.
   if (owner.kind === 'guard') return status === 401 ? 'without a valid session' : `signed in without what ${label(owner)} requires`;

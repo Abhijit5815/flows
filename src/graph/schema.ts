@@ -15,8 +15,8 @@ const node = <K extends string, A extends z.ZodType>(kind: K, attrs: A) =>
 const ApiNodeSchema = z.discriminatedUnion('kind', [
   node('route', z.object({ method: MethodSchema, path: z.string().startsWith('/') })),
   node('handler', Named.extend({ numeric: z.array(z.string().min(1)).optional() })), // numeric: path params it reads as numbers
-  node('guard', Named.extend({ carries: z.object({ header: z.string().optional(), scheme: z.string().optional(), cookie: z.string().optional() }).optional() })), // carries: what it reads the session from
-  node('middleware', Named),
+  node('guard', Named.extend({ limit: z.string().optional(), carries: z.object({ header: z.string().optional(), scheme: z.string().optional(), cookie: z.string().optional() }).optional() })), // carries: what it reads the session from
+  node('middleware', Named.extend({ limit: z.string().optional() })),
   node('request-schema', Named.extend({ fields: z.array(FieldSchema).optional() })), // fields: a Zod object Flows could read
   // messages: the string literals sent with it ("order not found"); guards and middleware respond too.
   // token: where a login's token is in the body ("data.token"); when: the condition each message is sent under.
@@ -31,7 +31,7 @@ const WebNodeSchema = z.discriminatedUnion('kind', [
   node('form', z.object({ fields: z.array(z.string().min(1)), ids: z.array(z.string().min(1)).optional(), submit: z.string().min(1).optional() })), // ids: the fields found by their id, having no name; submit: its button's text
   // redirects: where it sends the browser (redirect('/account')); messages: the strings it returns for the form to show.
   node('action', z.object({ name: z.string().min(1), server: z.boolean(), redirects: z.array(z.string().startsWith('/')).optional(), messages: z.array(z.string().min(1)).optional(), text: z.string().min(1).optional(), library: z.string().min(1).optional() })),
-  node('guard', Named.extend({ carries: z.object({ header: z.string().optional(), scheme: z.string().optional(), cookie: z.string().optional() }).optional() })),
+  node('guard', Named.extend({ limit: z.string().optional(), carries: z.object({ header: z.string().optional(), scheme: z.string().optional(), cookie: z.string().optional() }).optional() })),
   // A link to a page of the app (<Link href="/auth">); text: what it says, when that is fixed text.
   node('link', z.object({ href: z.string().startsWith('/'), text: z.string().min(1).optional() })),
   // Not linked in the graph; the flow engine links it to the route that answers it. The path may be a full URL (another service).

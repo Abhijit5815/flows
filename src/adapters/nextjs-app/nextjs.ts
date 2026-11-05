@@ -61,17 +61,17 @@ export function middlewareGuard({ files, resolver, graph }: Pick<ExtractContext,
   if (file === undefined) return undefined;
   const source = resolver.file(file);
   const declaration = source.getFunction('middleware') ?? source.getVariableDeclaration('middleware') ?? source.getFunction('proxy') ?? source.getVariableDeclaration('proxy') ?? source.getDefaultExportSymbol()?.getDeclarations()[0];
-  const carries = carriesOf(source.getText());
+  const scopes = [source, ...source.getDescendantsOfKind(SyntaxKind.Identifier).flatMap((identifier) => {
+    const definition = identifier.getDefinitionNodes()[0];
+    return definition !== undefined && inProject(definition) && definition.getSourceFile() !== source ? [definition] : [];
+  })];
+  const carries = carriesOf(scopes.map((scope) => scope.getText()).join('\n'));
   const guard = graph.add(`guard:${file}`, { kind: 'guard', name: 'middleware', ...(declaration === undefined ? { file, line: 1 } : resolver.where(declaration)), attrs: { name: 'middleware', ...(carries === undefined ? {} : { carries }) } });
   const config = source.getVariableDeclaration('config')?.getInitializer();
   const options = config === undefined ? undefined : resolver.values(config).find((value) => Node.isObjectLiteralExpression(value));
   const matcher = Node.isObjectLiteralExpression(options) ? options.getProperty('matcher') : undefined;
   const listed = Node.isPropertyAssignment(matcher) ? resolver.values(matcher.getInitializerOrThrow()) : [];
   const patterns = listed.flatMap((value) => (Node.isArrayLiteralExpression(value) ? value.getElements() : [value])).flatMap((value) => resolver.string(value) ?? []);
-  const scopes = [source, ...source.getDescendantsOfKind(SyntaxKind.Identifier).flatMap((identifier) => {
-    const definition = identifier.getDefinitionNodes()[0];
-    return definition !== undefined && inProject(definition) && definition.getSourceFile() !== source ? [definition] : [];
-  })];
   // A prefix whose branch lets the request through (if (pathname.startsWith('/api/auth')) return NextResponse.next())
   // is left out; any other prefix it checks is where it guards.
   const checks = scopes.flatMap((scope) => scope.getDescendantsOfKind(SyntaxKind.CallExpression)).flatMap((call) => {

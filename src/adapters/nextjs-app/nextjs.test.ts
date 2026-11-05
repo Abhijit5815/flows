@@ -178,3 +178,20 @@ test('page titles and pressed labels read as plain words', () => {
   );
   assert.deepEqual(['Sign Out', 'Sign in with GitHub', 'Proceed to Checkout', 'Prev', 'New post'].map(pressing), ['sign out', 'sign in with GitHub', 'proceed to checkout', 'press Prev', 'press New post']);
 });
+
+test('a middleware that reads a cookie by a constant from another file gives the cookie its real name', async () => {
+  const dir = join(tmp, 'cookie-const');
+  const write = (file: string, text: string) => {
+    mkdirSync(join(dir, file, '..'), { recursive: true });
+    writeFileSync(join(dir, file), text);
+  };
+  write('package.json', JSON.stringify({ dependencies: { next: '^14.2.5' } }));
+  write('tsconfig.json', JSON.stringify({ compilerOptions: { jsx: 'preserve', strict: true } }));
+  write('src/token.ts', 'export const SESSION_COOKIE_NAME = "shop_session";\n');
+  write('src/middleware.ts', "import { SESSION_COOKIE_NAME } from './token';\nexport function middleware(request: any) {\n  if (!request.cookies.has(SESSION_COOKIE_NAME)) return;\n}\nexport const config = { matcher: ['/account/:path*'] };\n");
+  write('app/account/page.tsx', 'export default function Account() {\n  return <h1>Account</h1>;\n}\n');
+  const project = tempProject(join(tmp, 'cookie-const-project'));
+  const { graph } = await scanRepo(project, addRepo(project, dir, 'web').config.repos[0]);
+  const guard = graph?.nodes.find((node) => node.kind === 'guard');
+  assert.deepEqual(guard?.kind === 'guard' ? guard.attrs.carries : undefined, { cookie: 'shop_session' });
+});

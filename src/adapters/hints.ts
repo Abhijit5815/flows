@@ -40,7 +40,9 @@ export function conditionOf(site: Node): string | undefined {
 // How a guard reads the session, from its code: the Authorization header and its scheme, a cookie, or an API-key
 // header. undefined when the code doesn't say.
 export function carriesOf(text: string): { header?: string; scheme?: string; cookie?: string } | undefined {
-  const cookie = /cookies?(?:\.get\(|\.has\(|\[|\.)\s*['"`]?([\w.-]+)/.exec(text)?.[1];
+  const named = /cookies?(?:\.get\(|\.has\(|\[|\.)\s*['"`]?([\w.-]+)/.exec(text)?.[1];
+  // A constant holding the name (cookies.get(SESSION_COOKIE_NAME)) is read through when its definition is in the text.
+  const cookie = named !== undefined && /^[A-Z_][A-Z0-9_]*$/.test(named) ? (new RegExp(`\\b${named}\\s*=\\s*['"\`]([\\w.-]+)['"\`]`).exec(text)?.[1] ?? named) : named;
   if (/authorization|fromAuthHeader|bearer/i.test(text)) {
     const scheme = /fromAuthHeaderWithScheme\(\s*['"`](\w+)/.exec(text)?.[1] ?? /['"`](Bearer|Token|JWT)\s/.exec(text)?.[1] ?? (/fromAuthHeaderAsBearerToken|bearer/i.test(text) ? 'Bearer' : undefined);
     return { header: 'Authorization', ...(scheme === undefined ? {} : { scheme }) };

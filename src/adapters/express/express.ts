@@ -17,6 +17,7 @@ const RULES = z
   .parse(JSON.parse(readFileSync(new URL('./rules.json', import.meta.url), 'utf8')));
 const GUARD_NAME = new RegExp(RULES.guards.name, 'i');
 const GUARD_BODY = new RegExp(RULES.guards.body);
+const RATE_LIMIT = /rate.?limit|throttle/i;
 
 const BEARER = { header: 'Authorization', scheme: 'Bearer' };
 
@@ -230,6 +231,15 @@ function extract({ facts, files, read, resolver, graph, guards }: ExtractContext
     if (schema !== undefined) graph.edge(route, schema, 'validated-by');
   };
 
+  // 60 * 60 * 24: the products and sums of numbers a limiter's window is written as.
+  const sum = (expression: Node, env: Env): number | undefined => {
+    if (Node.isParenthesizedExpression(expression)) return sum(expression.getExpression(), env);
+    if (!Node.isBinaryExpression(expression)) return resolver.number(expression, env);
+    const [left, right] = [sum(expression.getLeft(), env), sum(expression.getRight(), env)];
+    const op = expression.getOperatorToken().getText();
+    return left === undefined || right === undefined ? undefined : op === '*' ? left * right : op === '+' ? left + right : undefined;
+  };
+
   const addMiddleware = (route: string, { node, env }: Uses): void => {
     const values = resolver.values(node, env);
     if (values.length === 1 && Node.isArrayLiteralExpression(values[0])) {
@@ -265,7 +275,11 @@ function extract({ facts, files, read, resolver, graph, guards }: ExtractContext
       return definition !== undefined && definition !== declaration && inProject(definition) && !declaration.containsRange(definition.getPos(), definition.getEnd()) ? [definition.getText()] : [];
     });
     const carries = guard ? (carriesOf([declaration.getText(), ...used].join('\n')) ?? (fn !== undefined && libraryStatus(fn) !== undefined ? BEARER : undefined)) : undefined;
-    const owner = graph.add(fixed.length === 0 ? keyOf(declaration) : `${keyOf(declaration)}(${fixed.join(',')})`, { kind: guard ? 'guard' : 'middleware', name, ...where, attrs: { name, ...(carries === undefined ? {} : { carries }) } });
+    // A rate limiter's numbers (rateLimitPerUser('idea-post', 5, 86400)) are what a test needs to hit or avoid it; one node per call.
+    const limitArgs = RATE_LIMIT.test(base) && Node.isCallExpression(node) ? node.getArguments().map((arg) => resolver.string(arg, env) ?? sum(arg, env)) : [];
+    // Arguments that are code (a key function) are left out; the literal ones stay.
+    const limit = limitArgs.some((arg) => typeof arg === 'number') ? limitArgs.filter((arg) => arg !== undefined).join(', ') : undefined;
+    const owner = graph.add(fixed.length === 0 && limit === undefined ? keyOf(declaration) : `${keyOf(declaration)}(${fixed.join(',')}${limit ?? ''})`, { kind: guard ? 'guard' : 'middleware', name, ...where, attrs: { name, ...(carries === undefined ? {} : { carries }), ...(limit === undefined ? {} : { limit }) } });
     graph.edge(route, owner, guard ? 'guarded-by' : 'uses');
     if (!responded.has(owner)) {
       responded.add(owner);

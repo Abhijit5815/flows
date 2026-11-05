@@ -80,6 +80,7 @@ changes are saved in each repo's `.flows/` folder, so they go into version contr
 | `flows jobs` / `flows answer` | The AI jobs waiting for your coding assistant, and its answers. |
 | `flows explore <url>` | Visit the running app read-only (every write is blocked) and cross-check it with the source. |
 | `flows login <url> --as <name>` | Log in once by hand; `explore --as <name>` reuses the session. |
+| `flows verify-locators <url> [--as <name>]` | Open each page the flows act on (plain GETs, read-only) and check every exported selector finds exactly one element. `flows export` then marks each one. |
 | `flows inspect` | Use the app by hand in a browser window, for what the explorer can't reach. |
 | `flows eval`, `flows cost` | The Decider's accuracy and drift; LLM calls and tokens per run. |
 
@@ -87,12 +88,30 @@ changes are saved in each repo's `.flows/` folder, so they go into version contr
 
 ### What the export holds
 
-Each step carries what a test needs: the request (with the body's fields and rules) and the path parameters' types;
-a UI step's action (the fields to fill and the button to press, each with a ready selector); a page's expected
-heading; the expected result; and every error with its status, sender, message and when it happens. A "Log in
-first" step says how the session is carried (`Authorization: Bearer <data.token>`, or a cookie). A UI flow's API
-call carries the check, errors and body of the backend route that answers it, and a call no route answers is
-flagged `no backend route`.
+Each step carries what a test needs: the request (with the body's fields and rules, and an `example` body that
+passes them) and the path parameters' types; a UI step's action (the fields to fill and the button to press, each
+with a Playwright selector); a page's expected heading; the expected result; and every error with its status,
+sender, message and when it happens. A "Log in first" step says how the session is carried
+(`Authorization: Bearer <data.token>`, or a cookie). A UI flow's API call carries the check, errors and body of
+the backend route that answers it, and a call no route answers is flagged `no backend route`. At the top, `base_url`
+is where the live app was explored (or the `--base-url` you pass to `flows export`).
+
+### How far to trust a selector
+
+Selectors start from the code, which cannot see what a component library really renders. So each field and button
+says where its selector came from, in `locator`:
+
+| `locator` | Meaning |
+|---|---|
+| `verified` | `flows verify-locators` found exactly one such element on the running page. Use it. |
+| `live` | The explorer or the inspector saw that control on the running app. |
+| `source` | Built from the code only. Check it. |
+| `ambiguous` | Several elements match; Playwright's strict mode would refuse it. |
+| `missing` | The page loaded and the element was not there. Fix it before relying on it. |
+
+With live runs, each step also has `observed`. The explorer never writes, so a step behind a write (the page after
+"place order") reads `observed: false` until you walk it once by hand with `flows inspect` (or `flows ui`, "Live
+app"). That walk records the real pages and selectors, and the next export uses them.
 
 ## Working as a team
 

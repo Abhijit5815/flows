@@ -45,6 +45,9 @@ const ErrorSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('ui'), message: z.string().min(1), when: z.string().min(1).optional(), evidence: EvidenceListSchema }),
 ]);
 
+// Export only: how far to trust a selector (see live/locators.ts).
+const LocatorSchema = z.enum(['verified', 'live', 'source', 'ambiguous', 'missing']);
+
 export const StepSchema = z
   .object({
     id: z.string().min(1),
@@ -54,7 +57,8 @@ export const StepSchema = z
       .object({
         method: z.enum(HTTP_METHODS),
         path: z.string().startsWith('/'),
-        body: z.object({ schema: z.string().min(1), fields: z.array(FieldSchema).min(1), evidence: EvidenceListSchema }).optional(),
+        // example: export only, a body that passes the rules (engine/examples.ts).
+        body: z.object({ schema: z.string().min(1), fields: z.array(FieldSchema).min(1), evidence: EvidenceListSchema, example: z.record(z.string(), z.unknown()).optional() }).optional(),
       })
       .optional(),
     evidence: EvidenceListSchema,
@@ -65,8 +69,8 @@ export const StepSchema = z
     action: z
       .object({
         kind: z.enum(['submit', 'click']),
-        fields: z.array(z.object({ name: z.string().min(1), selector: z.string().min(1) })),
-        button: z.object({ text: z.string().min(1), selector: z.string().min(1) }).optional(),
+        fields: z.array(z.object({ name: z.string().min(1), selector: z.string().min(1), locator: LocatorSchema.optional() })),
+        button: z.object({ text: z.string().min(1), selector: z.string().min(1), locator: LocatorSchema.optional() }).optional(),
       })
       .optional(),
     // The parameters in a step's path (/orders/:orderId, /products/[id]): their type, and an example value when a live
@@ -77,6 +81,8 @@ export const StepSchema = z
     session: z.object({ header: z.string().min(1).optional(), scheme: z.string().min(1).optional(), cookie: z.string().min(1).optional(), token: z.string().min(1).optional() }).optional(),
     // A UI flow's API call: the backend route that answers it (its API flow, and the route as evidence).
     answered_by: z.object({ flow: z.string().min(1), evidence: EvidenceListSchema }).optional(),
+    // Export only, with live runs: whether the running app showed this step (a blocked write never does).
+    observed: z.boolean().optional(),
     enabled: z.boolean(),
     subflow_ref: z.string().min(1).optional(),
   })

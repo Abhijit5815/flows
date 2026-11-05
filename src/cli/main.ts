@@ -30,7 +30,9 @@ import { evaluate, loadKeys, type Score } from '../ingest/eval.ts';
 import { listFiles } from '../ingest/files.ts';
 import { isSource } from '../ingest/match.ts';
 import { CoverageSchema, scanRepo } from '../ingest/pipeline.ts';
+import { checksOf, loadChecks, saveChecks, verifyLocators } from '../live/locators.ts';
 import { loginByHand, sessionFile } from '../live/login.ts';
+import { loadRuns } from '../live/run.ts';
 import { crossCheckLines, runLines } from '../live/report.ts';
 import { exploreProject, walkInInspector } from '../live/walk.ts';
 import { answerJob, loadJobs } from '../llm/assistant.ts';
@@ -62,6 +64,7 @@ const USAGE = `usage: flows <command> [--project <dir>]
   review <flow-id> correct|wrong|never [--comment <text>] [--repo <path>]   a reviewer's verdict (never: don't
                                            suggest it again), kept in the repo's rules; the next scan applies it
                                            (--repo when two repos have that id)
+  verify-locators <url> [--as <name>]      open each page the flows act on (read-only) and check every exported selector finds one element
   explore <url> [--as <name>] [--headed]   explore the live app read-only (writes never reach it), then cross-check
                                            its flows with source; --as signs in with the saved session of
                                            "flows login" or the env credentials in explorer.logins.<name>
@@ -117,6 +120,7 @@ const parsed = (() => {
     headed: { type: 'boolean', default: false },
     changed: { type: 'boolean', default: false },
     flow: { type: 'string' },
+    'base-url': { type: 'string' },
   },
 });
   } catch (error) {
@@ -674,7 +678,7 @@ async function run(): Promise<void> {
       const project = withRepos(loadProject(root));
       const sets = project.config.repos.map((repo) => loadFlows(project, repo));
       if (sets.some((set) => set === undefined)) throw new FlowsError('some repos have no flows yet; run "flows scan"');
-      const exported = exportFlows(sets.flatMap((set) => set ?? []), categories(project.config), values.changed);
+      const exported = exportFlows(sets.flatMap((set) => set ?? []), categories(project.config), values.changed, { runs: loadRuns(project), checks: loadChecks(project), ...(values['base-url'] === undefined ? {} : { baseUrl: values['base-url'] }) });
       if (values.out === undefined) console.log(JSON.stringify(exported, null, 2));
       else {
         try {
@@ -684,6 +688,21 @@ async function run(): Promise<void> {
         }
         console.log(`${exported.flows.length} flows written to ${resolve(values.out)}`);
       }
+      return;
+    }
+    case 'verify-locators': {
+      if (!sub) throw new FlowsError('usage: flows verify-locators <url> [--as <name>]');
+      const project = withRepos(loadProject(root));
+      const sets = project.config.repos.map((repo) => loadFlows(project, repo));
+      if (sets.some((set) => set === undefined)) throw new FlowsError('some repos have no flows yet; run "flows scan"');
+      const exported = exportFlows(sets.flatMap((set) => set ?? []), categories(project.config), false);
+      const name = loginName();
+      const saved = name === undefined ? undefined : sessionFile(project, name);
+      const results = await verifyLocators(exported.flows, new URL(sub), { browser: project.config.explorer.browser, storageState: saved !== undefined && existsSync(saved) ? saved : undefined, safe: project.config.explorer.safe_requests });
+      saveChecks(project, { ...loadChecks(project), ...checksOf(results) });
+      for (const r of results) console.log(`${r.result.padEnd(9)} ${r.page}  ${r.selector}${r.note === undefined ? '' : `  (${r.note})`}`);
+      const count = (what: string) => results.filter((r) => r.result === what).length;
+      console.log(`${count('verified')} verified, ${count('missing')} missing, ${count('ambiguous')} ambiguous, ${count('skipped')} skipped; "flows export" now carries these`);
       return;
     }
     case 'explore':

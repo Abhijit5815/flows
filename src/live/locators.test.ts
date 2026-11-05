@@ -22,6 +22,7 @@ const flow = {
     { id: 's1', kind: 'ui', check: { kind: 'ui', page: '/login' } },
     { id: 's2', kind: 'ui', check: { kind: 'ui', page: '/account' }, action: { kind: 'submit', fields: [{ name: 'email', selector: '[name="email"]' }, { name: 'nick', selector: '[name="nick"]' }], button: { text: 'Sign in', selector: 'role=button[name="Sign in"]' } } },
     { id: 's3', kind: 'api', request: { method: 'POST', path: '/api/login' }, check: null },
+    { id: 's4', kind: 'subflow', subflow_ref: 'x', check: null },
   ],
 } as unknown as Flow;
 
@@ -36,12 +37,12 @@ test('selectors the app showed replace the code\'s, and a blocked write is not o
   const action = out.steps[1].action;
   assert.deepEqual(action?.fields.map((f) => [f.selector, f.locator]), [['[data-testid="email-input"]', 'live'], ['[name="nick"]', 'source']]);
   assert.deepEqual([action?.button?.selector, action?.button?.locator], ['[id="go"]', 'live']);
-  assert.deepEqual(out.steps.map((s) => s.observed), [true, false, false]);
+  assert.deepEqual(out.steps.map((s) => s.observed), [true, false, false, undefined]);
 });
 
 test('without live runs nothing claims to be observed and every selector is from source', () => {
   const [out] = annotate([flow], []);
-  assert.deepEqual(out.steps.map((s) => s.observed), [undefined, undefined, undefined]);
+  assert.deepEqual(out.steps.map((s) => s.observed), [undefined, undefined, undefined, undefined]);
   assert.equal(out.steps[1].action?.fields[0].locator, 'source');
 });
 

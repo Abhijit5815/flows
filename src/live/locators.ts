@@ -114,7 +114,7 @@ export function annotate(flows: readonly Flow[], runs: readonly Run[], checks: C
         };
         out = { ...out, action };
       }
-      if (runs.length > 0) out = { ...out, observed: observedStep(step, states, requests, actions) };
+      if (runs.length > 0 && step.kind !== 'subflow') out = { ...out, observed: observedStep(step, states, requests, actions) };
       return out;
     });
     return { ...flow, steps };

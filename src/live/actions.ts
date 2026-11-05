@@ -55,7 +55,7 @@ export function candidatesOf(state: State, origin: string, patternOf: (path: str
   return found;
 }
 
-export type Gate = { decider: Decider; minSafeProb: number; origin: string };
+export type Gate = { decider: Decider; minSafeProb: number; origin: string; allowDestructive?: boolean };
 
 type Decision = Action['decision'];
 const rule = (reason: string): Decision => ({ label: 'skip', prob: 1, probs: {}, by: 'rule', reason });
@@ -96,5 +96,5 @@ export async function gate(candidate: Candidate, state: State, deps: Gate): Prom
           ? `rated safe (p=${p})${from}`
           : `rated safe, but only p=${p}, below explorer.min_safe_prob ${deps.minSafeProb}${from}`
         : `the Decider was unsure${from}`;
-  return { decision: { label: risk.label, prob: risk.prob, probs: risk.all_probs, by: 'decider', reason }, taken: risk.label === 'safe' && risk.prob >= deps.minSafeProb };
+  return { decision: { label: risk.label, prob: risk.prob, probs: risk.all_probs, by: 'decider', reason }, taken: (risk.label === 'safe' && risk.prob >= deps.minSafeProb) || (risk.label === 'destructive' && deps.allowDestructive === true) };
 }

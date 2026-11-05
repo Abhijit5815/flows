@@ -43,7 +43,8 @@ export function playwrightSelector(selector: string): string {
   }
 }
 
-const ChecksSchema = z.record(z.string(), z.enum(['verified', 'ambiguous', 'missing']));
+// after: Playwright selectors to click, in order, before the element exists (a tab, a "Sign up with email" button).
+const ChecksSchema = z.record(z.string(), z.object({ result: z.enum(['verified', 'ambiguous', 'missing']), after: z.array(z.string()).optional() }));
 export type Checks = z.infer<typeof ChecksSchema>;
 
 const checksFile = (project: Project): string => join(projectDataDir(project), 'locator-checks.json');
@@ -93,19 +94,25 @@ function seenButton(runs: readonly Run[], page: string, text: string): Found | u
 // says whether the running app showed it. A write is blocked for the explorer, so it reads "observed: false" unless a
 // person did it by hand in the inspector.
 export function annotate(flows: readonly Flow[], runs: readonly Run[], checks: Checks = {}): Flow[] {
-  const requests = runs.flatMap((run) => run.requests);
-  const states = runs.flatMap((run) => run.states);
-  const actions = runs.flatMap((run) => run.actions);
-  return withExamples(flows).map((flow) => {
+  const base = withExamples(flows);
+  const creates = new Map<string, NonNullable<NonNullable<Step['request']>['body']>>();
+  const lists = new Set<string>();
+  for (const flow of base) {
+    for (const step of flow.steps) {
+      if (step.request?.method === 'POST') creates.set(step.request.path, step.request.body ?? { schema: '', fields: [], evidence: [] });
+      if (step.request?.method === 'GET') lists.add(step.request.path);
+    }
+  }
+  return base.map((flow) => {
     const pages = actionPages(flow);
     const steps = flow.steps.map((step): Step => {
       let out = step;
       if (step.action !== undefined) {
         const page = pages.get(step) ?? '/';
-        const mark = (selector: string, found: Found | undefined): { selector: string; locator: Locator } => {
+        const mark = (selector: string, found: Found | undefined): { selector: string; locator: Locator; after?: string[] } => {
           const chosen = found === undefined ? selector : playwrightSelector(found.selector);
           const checked = checks[keyOf(page, chosen)];
-          return { selector: chosen, locator: checked ?? (found === undefined ? 'source' : 'live') };
+          return { selector: chosen, locator: checked?.result ?? (found === undefined ? 'source' : 'live'), ...(checked?.after === undefined ? {} : { after: checked.after }) };
         };
         const action: Action = {
           ...step.action,
@@ -114,11 +121,47 @@ export function annotate(flows: readonly Flow[], runs: readonly Run[], checks: C
         };
         out = { ...out, action };
       }
-      if (runs.length > 0 && step.kind !== 'subflow') out = { ...out, observed: observedStep(step, states, requests, actions) };
+      if (runs.length > 0 && step.kind !== 'subflow') {
+        const seen = runs.filter((run) => observedStep(step, run.states, run.requests, run.actions));
+        out = { ...out, observed: seen.length > 0 };
+        if (seen.length > 0) out = { ...out, observed_as: [...new Set(seen.map((run) => run.session ?? 'signed out'))] };
+        const answer = step.kind === 'api' ? responseExample(step, seen) : undefined;
+        if (answer !== undefined) out = { ...out, response_example: answer };
+      }
+      const setup = step.request === undefined ? [] : setupFor(step.request.path, creates, lists);
+      if (setup.length > 0) out = { ...out, setup };
       return out;
     });
     return { ...flow, steps };
   });
+}
+
+// A real answer to this call, from the live runs that made it (redacted when recorded); not one past 4 KB.
+function responseExample(step: Step, runs: readonly Run[]): unknown {
+  const route = step.request === undefined ? undefined : routeRegex(step.request.path);
+  for (const run of runs) {
+    for (const request of run.requests) {
+      if (request.kind !== 'api' || request.method !== step.request?.method || route?.test(request.path) !== true || request.blocked || request.status === null || request.status >= 300) continue;
+      const body = request.response?.body;
+      if (body !== undefined && body !== null && JSON.stringify(body).length <= 4000) return body;
+    }
+  }
+  return undefined;
+}
+
+// For each :param in a path, how a test gets one: the route that creates the thing (POST on the path before the
+// param) and the one that lists it, when the flows have them.
+function setupFor(path: string, creates: ReadonlyMap<string, NonNullable<NonNullable<Step['request']>['body']>>, lists: ReadonlySet<string>): NonNullable<Step['setup']> {
+  const out: NonNullable<Step['setup']> = [];
+  const segments = path.split('/');
+  segments.forEach((segment, i) => {
+    if (!segment.startsWith(':')) return;
+    const before = segments.slice(0, i).join('/');
+    const body = creates.get(before);
+    if (body === undefined && !lists.has(before)) return;
+    out.push({ param: segment.slice(1), ...(body === undefined ? {} : { create: `POST ${before}`, ...(body.example === undefined ? {} : { body: body.example }) }), ...(lists.has(before) ? { list: `GET ${before}` } : {}) });
+  });
+  return out;
 }
 
 function observedStep(step: Step, states: Run['states'], requests: Run['requests'], actions: Run['actions']): boolean {
@@ -138,12 +181,15 @@ function observedStep(step: Step, states: Run['states'], requests: Run['requests
   return false;
 }
 
-export type Verified = { page: string; selector: string; result: Locator | 'skipped'; note?: string };
+export type Verified = { page: string; selector: string; result: Locator | 'skipped'; note?: string; after?: string[] };
+
+// Controls a person would not press just to look: the search for what a click reveals never presses these.
+const RISKY = /delete|remove|sign out|log ?out|pay|purchase|buy|block|report|cancel|unsubscribe|deactivate|submit|confirm|send|save/i;
 
 // Opens each page the flows act on with plain GETs (a read-only guard stands in front, as in the explorer) and counts
 // the elements each exported selector finds. A page with a parameter, or one the app sent elsewhere (a login guard),
 // is skipped, with the reason.
-export async function verifyLocators(flows: readonly Flow[], base: URL, opts: { browser: string | undefined; storageState: string | undefined; safe: readonly string[] }): Promise<Verified[]> {
+export async function verifyLocators(flows: readonly Flow[], base: URL, opts: { browser: string | undefined; storageState: string | undefined; safe: readonly string[]; log?: (line: string) => void }): Promise<Verified[]> {
   const wanted = new Map<string, Set<string>>();
   for (const flow of flows) {
     for (const [step, page] of actionPages(flow)) {
@@ -158,7 +204,9 @@ export async function verifyLocators(flows: readonly Flow[], base: URL, opts: { 
     const context = await newContext(browser, opts.storageState);
     await guardReadOnly(context, opts.safe);
     const page: Page = await context.newPage();
+    let done = 0;
     for (const [path, selectors] of wanted) {
+      opts.log?.(`  ${++done}/${wanted.size} ${path}`);
       if (/[[:*]/.test(path)) {
         for (const selector of selectors) results.push({ page: path, selector, result: 'skipped', note: 'the page has a parameter' });
         continue;
@@ -175,10 +223,26 @@ export async function verifyLocators(flows: readonly Flow[], base: URL, opts: { 
         for (const selector of selectors) results.push({ page: path, selector, result: 'skipped', note: `the app sent it to ${landed}; try --as <login>` });
         continue;
       }
+      const missing: string[] = [];
       for (const selector of selectors) {
-        const count = await page.locator(selector).count().catch(() => 0);
-        results.push({ page: path, selector, result: count === 1 ? 'verified' : count === 0 ? 'missing' : 'ambiguous' });
+        const count = await page.locator(`${selector} >> visible=true`).count().catch(() => 0);
+        if (count === 0) missing.push(selector);
+        else results.push({ page: path, selector, result: count === 1 ? 'verified' : 'ambiguous' });
       }
+      // What is not there yet may be behind a tab or a first step: press each harmless button once, a click deep.
+      for (const reveal of missing.length === 0 ? [] : await revealers(page)) {
+        if (missing.length === 0) break;
+        await page.locator(reveal).first().click({ timeout: 2000 }).catch(() => undefined);
+        await page.waitForTimeout(300);
+        for (const selector of [...missing]) {
+          const count = await page.locator(`${selector} >> visible=true`).count().catch(() => 0);
+          if (count === 0) continue;
+          results.push({ page: path, selector, result: count === 1 ? 'verified' : 'ambiguous', after: [reveal] });
+          missing.splice(missing.indexOf(selector), 1);
+        }
+        if (missing.length > 0) await page.goto(new URL(path, base).href, { waitUntil: 'load', timeout: 30_000 }).then(() => page.waitForTimeout(300)).catch(() => undefined);
+      }
+      for (const selector of missing) results.push({ page: path, selector, result: 'missing' });
     }
   } finally {
     await browser.close();
@@ -186,5 +250,14 @@ export async function verifyLocators(flows: readonly Flow[], base: URL, opts: { 
   return results;
 }
 
+// Role selectors for the page's tabs and buttons that are safe to press, at most 25.
+async function revealers(page: Page): Promise<string[]> {
+  const found = await page
+    .evaluate(() => [...document.querySelectorAll('button, [role=tab]')].filter((el) => (el as HTMLElement).checkVisibility?.() ?? true).map((el) => ({ role: el.getAttribute('role') ?? 'button', name: (el.getAttribute('aria-label') ?? el.textContent ?? '').replace(/\s+/g, ' ').trim() })))
+    .catch(() => []);
+  const unique = new Map(found.filter((c) => c.name !== '' && c.name.length < 60 && !RISKY.test(c.name)).map((c) => [`role=${c.role}[name=${JSON.stringify(c.name)}]`, c]));
+  return [...unique.keys()].slice(0, 25);
+}
+
 export const checksOf = (results: readonly Verified[]): Checks =>
-  Object.fromEntries(results.flatMap((r) => (r.result === 'verified' || r.result === 'ambiguous' || r.result === 'missing' ? [[keyOf(r.page, r.selector), r.result] as const] : [])));
+  Object.fromEntries(results.flatMap((r) => (r.result === 'verified' || r.result === 'ambiguous' || r.result === 'missing' ? [[keyOf(r.page, r.selector), { result: r.result, ...(r.after === undefined ? {} : { after: r.after }) }] as const] : [])));

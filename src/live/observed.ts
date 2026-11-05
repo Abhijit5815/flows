@@ -202,3 +202,28 @@ export function observedFlows(runs: readonly Run[], patterns: Patterns): Seen[] 
   for (const view of loginViews) add(view);
   return [...found.values()];
 }
+
+const FOLD_AT = 4;
+
+// Look-alike clicks on one page that do the same thing (every skill chip, user card or idea title) are one flow, not one
+// each: four or more with the same page and the same calls fold into a single flow that lists them.
+export function foldClicks(seens: readonly Seen[]): Seen[] {
+  const groups = new Map<string, Seen[]>();
+  for (const seen of seens) {
+    if (seen.act?.kind !== 'click' || seen.page === undefined) continue;
+    const key = `${seen.page.pattern}|${seen.calls.map((call) => `${call.method} ${call.pattern}`).sort().join(',')}`;
+    groups.set(key, [...(groups.get(key) ?? []), seen]);
+  }
+  const folded = new Set<Seen>();
+  const out: Seen[] = [];
+  for (const [key, group] of groups) {
+    const [first] = group;
+    if (group.length < FOLD_AT || first.act === undefined || first.page === undefined) continue;
+    for (const seen of group) folded.add(seen);
+    const labels = group.map((seen) => seen.act?.text ?? '');
+    const claim = `Click one of ${group.length} look-alike controls: ${labels.slice(0, 6).map((label) => `"${label}"`).join(', ')}${labels.length > 6 ? ', ...' : ''}`;
+    const flow = { ...first.flow, id: flowId('ui', `fold|${key}`), name: userCan(`press one of the ${group.length} look-alike controls on ${pageTitle(first.page.pattern)}`), steps: first.flow.steps.map((step) => (step.claim.startsWith('Click "') ? { ...step, claim } : step)) };
+    out.push({ ...first, flow, act: { ...first.act, text: `${group.length} look-alike controls` } });
+  }
+  return [...seens.filter((seen) => !folded.has(seen)), ...out];
+}

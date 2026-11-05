@@ -71,3 +71,47 @@ test('a request body gets an example that passes its rules', async () => {
   assert.equal(exampleValue(f('qty', 'number', ['int', 'positive'])), 1);
   assert.equal(exampleValue(f('qty', 'number', ['default(3)'])), 3);
 });
+
+test('a control behind a click is found by pressing the button that shows it, and the export says which', { skip: browserSkip }, async () => {
+  const server = await startFakeServer((request, response) => {
+    response.writeHead(200, { 'content-type': 'text/html' });
+    response.end(request.url === '/login' ? '<button onclick="document.getElementById(\'f\').hidden=false">Show form</button><button>Delete everything</button><form id="f" hidden><input name="email"></form>' : '<p>hi</p>');
+  });
+  try {
+    const results = await verifyLocators([flow], new URL(server.url), { browser: undefined, storageState: undefined, safe: [] });
+    const email = results.find((r) => r.selector === '[name="email"]');
+    assert.deepEqual([email?.result, email?.after], ['verified', ['role=button[name="Show form"]']]);
+    const [out] = annotate([flow], [], checksOf(results));
+    assert.deepEqual(out.steps[1].action?.fields[0].after, ['role=button[name="Show form"]']);
+  } finally {
+    await server.close();
+  }
+});
+
+test('the export says which login saw a step, shows a real answer, and how to get an id the path needs', () => {
+  const api = (method: string, path: string, extra = {}) => ({ id: 's', kind: 'api', request: { method, path, ...extra }, check: null });
+  const f = {
+    id: 'a',
+    steps: [
+      api('GET', '/api/ideas'),
+      api('POST', '/api/ideas', { body: { schema: 'x', fields: [{ name: 'title', type: 'string', required: true, rules: [] }], evidence: [] } }),
+      api('GET', '/api/ideas/:ideaId/members'),
+    ],
+  } as unknown as Flow;
+  const seen = { session: 'funder', states: [], actions: [], requests: [{ kind: 'api', method: 'GET', path: '/api/ideas/7/members', blocked: false, status: 200, response: { type: 'json', fields: ['a'], body: { data: [1] } } }] } as unknown as Run;
+  const [out] = annotate([f], [seen]);
+  assert.deepEqual(out.steps[2].setup, [{ param: 'ideaId', create: 'POST /api/ideas', body: { title: 'test' }, list: 'GET /api/ideas' }]);
+  assert.deepEqual(out.steps[2].observed_as, ['funder']);
+  assert.deepEqual(out.steps[2].response_example, { data: [1] });
+  assert.equal(out.steps[0].observed, false);
+});
+
+test('four look-alike clicks on one page fold into one flow, fewer stay as they are', async () => {
+  const { foldClicks } = await import('./observed.ts');
+  const click = (label: string) => ({ flow: { id: label, name: label, steps: [{ claim: 'Open /d' }, { claim: `Click "${label}"` }] }, page: { pattern: '/d' }, act: { kind: 'click', text: label }, calls: [], text: label, noise: false, run: 'r' }) as never;
+  const four = ['a', 'b', 'c', 'd'].map(click);
+  const out = foldClicks(four);
+  assert.equal(out.length, 1);
+  assert.match(out[0].flow.steps[1].claim, /^Click one of 4 look-alike controls: "a", "b", "c", "d"$/);
+  assert.equal(foldClicks(four.slice(0, 3)).length, 3);
+});

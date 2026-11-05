@@ -10,6 +10,7 @@ import { guidedSteps, knowing } from './know.ts';
 import { envCredentials, sessionFile } from './login.ts';
 import { indexOf } from './match.ts';
 import { loadRuns, runDir, saveRun, type Run } from './run.ts';
+import { requireTestHost, runReset } from './writes.ts';
 import { sourceTexts } from './texts.ts';
 
 // One inspector walk for a project, as `flows inspect` and the review page's "Walk this in the inspector" start it:
@@ -73,7 +74,7 @@ export async function walkInInspector(
 
 // One read-only explorer run, as `flows explore` and the review page's "Explore" start it: signed out, or as a login
 // that has a saved session or env credentials. The run is saved and every scanned repo's flows are built again.
-export type ExploreRequest = { url: string; as?: string; headed?: boolean };
+export type ExploreRequest = { url: string; as?: string; headed?: boolean; allowWrites?: boolean; allowDestructive?: boolean };
 
 export async function exploreProject(
   project: Project,
@@ -102,7 +103,10 @@ export async function exploreProject(
     const graph = loadGraph(project, repo);
     return graph === undefined ? [] : [{ repo, graph }];
   });
-  log(`exploring ${url} ${name === undefined ? 'signed out' : `as ${name}`}; it only reads: every write and WebSocket is blocked`);
+  if (request.allowWrites === true) requireTestHost(url, project.config.explorer.test_hosts);
+  const reset = request.allowWrites === true ? project.config.explorer.reset : undefined;
+  log(`exploring ${url} ${name === undefined ? 'signed out' : `as ${name}`}; ${request.allowWrites === true ? 'writes to this test host are allowed' : 'it only reads: every write and WebSocket is blocked'}`);
+  if (reset !== undefined) await runReset(reset, project.root, log);
   const run = await explore(
     {
       url,
@@ -113,9 +117,12 @@ export async function exploreProject(
       pages: graphs.flatMap(({ graph }) => graph.nodes.flatMap((node) => (node.kind === 'page' ? [node.attrs.path] : []))),
       source: sourceTexts(graphs.map(({ graph }) => graph)),
       headless: request.headed !== true,
+      allowWrites: request.allowWrites === true,
+      allowDestructive: request.allowDestructive === true,
     },
     { decider: deps.decider, llm: deps.llm, config: project.config.explorer, runDir: (id) => runDir(project, id), log },
   );
+  if (reset !== undefined) await runReset(reset, project.root, log);
   return serial(async () => {
     saveRun(project, run);
     const sets: { repo: Repo; set: FlowSet }[] = [];

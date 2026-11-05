@@ -10,6 +10,7 @@ import { eventBase, type TraceEvent } from '../trace/event.ts';
 import type { TraceSink } from '../trace/sink.ts';
 import { liveFor, matchFlow, NOT_OBSERVED, ROLE_NOT_EXPLORED, rolesOf, unexploredGuard, type Live } from '../live/crosscheck.ts';
 import { indexOf } from '../live/match.ts';
+import { foldClicks } from '../live/observed.ts';
 import { NO_ROUTE } from '../model/tags.ts';
 import { loadGraph } from '../graph/store.ts';
 import { backendOf, linkCalls } from './backend.ts';
@@ -150,7 +151,8 @@ export async function buildFlows(graph: Graph, human: HumanInput, deps: EngineDe
   }
 
   // Observed-only: what the live app showed that no source flow here matched, shown for review (PLAN.md Phase 3).
-  for (const seen of live?.mine ?? []) {
+  const pending = foldClicks((live?.mine ?? []).filter((seen) => !seen.noise && !used.has(seen.flow.id) && !set.flows.some((flow) => flow.id === seen.flow.id)));
+  for (const seen of pending) {
     const started = performance.now();
     const { id } = seen.flow;
     if (seen.noise || used.has(id) || set.flows.some((flow) => flow.id === id)) continue;

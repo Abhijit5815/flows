@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { basename, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createInterface } from 'node:readline/promises';
@@ -32,7 +32,7 @@ import { isSource } from '../ingest/match.ts';
 import { CoverageSchema, scanRepo } from '../ingest/pipeline.ts';
 import { checksOf, loadChecks, saveChecks, verifyLocators } from '../live/locators.ts';
 import { loginByHand, sessionFile } from '../live/login.ts';
-import { loadRuns } from '../live/run.ts';
+import { loadRuns, runDir } from '../live/run.ts';
 import { crossCheckLines, runLines } from '../live/report.ts';
 import { exploreProject, walkInInspector } from '../live/walk.ts';
 import { answerJob, loadJobs } from '../llm/assistant.ts';
@@ -64,8 +64,11 @@ const USAGE = `usage: flows <command> [--project <dir>]
   review <flow-id> correct|wrong|never [--comment <text>] [--repo <path>]   a reviewer's verdict (never: don't
                                            suggest it again), kept in the repo's rules; the next scan applies it
                                            (--repo when two repos have that id)
+  runs [--drop <origin>]                   list the live runs by origin, or drop the ones of an origin (a stale staging run)
   verify-locators <url> [--as <name>]      open each page the flows act on (read-only) and check every exported selector finds one element
   explore <url> [--as <name>] [--headed]   explore the live app read-only (writes never reach it), then cross-check
+           [--allow-writes [--allow-destructive]]  on a test host only (localhost, *.test, explorer.test_hosts): let writes through,
+                                           and run explorer.reset before and after
                                            its flows with source; --as signs in with the saved session of
                                            "flows login" or the env credentials in explorer.logins.<name>
   login <url> --as <name>                  log in by hand in a browser window; the session is kept, locally, for
@@ -80,6 +83,7 @@ const USAGE = `usage: flows <command> [--project <dir>]
                                            --changed: only the flows new or changed since the last scan. Advice only.
   jobs [--json]                            with "llm": {"provider": "assistant"}: the AI jobs waiting for your
                                            coding assistant (names, descriptions, unknown categories, rule drafts)
+  answer --file <answers.json>             keep many answers at once: {"<job-id>": <answer>, ...}
   answer <job-id> '<json>'                 the assistant's answer to a job; the next scan checks it and uses it
   rule missed <path:line> [--save]         propose a rule that finds what the scan missed there (kept with --save)
   rule exclude <node-id>                   leave a node out of every scan ("not a flow")
@@ -121,6 +125,10 @@ const parsed = (() => {
     changed: { type: 'boolean', default: false },
     flow: { type: 'string' },
     'base-url': { type: 'string' },
+    drop: { type: 'string' },
+    file: { type: 'string' },
+    'allow-writes': { type: 'boolean', default: false },
+    'allow-destructive': { type: 'boolean', default: false },
   },
 });
   } catch (error) {
@@ -299,7 +307,8 @@ async function localModels(): Promise<{ base_url: string; model: string }[]> {
 
 // First run on a terminal: which LLM, then the repos. Keys are never asked for, only the variable that holds them.
 // Without an answer the config keeps its default, which may not exist on this machine; the review page can change it later.
-async function askFirstRun(project: Project): Promise<Project> {
+async function askFirstRun(project: Project): Promise<{ project: Project; setup: boolean }> {
+  let setUp = false;
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   const ask = async (question: string, fallback = ''): Promise<string> => (await rl.question(fallback ? `${question} [${fallback}] ` : `${question} `)).trim() || fallback;
   try {
@@ -331,10 +340,11 @@ async function askFirstRun(project: Project): Promise<Project> {
         console.log((error as Error).message);
       }
     }
+    setUp = (await ask('Download the local models now (about 430 MB, once; they work offline after)? y/n', 'y')).toLowerCase().startsWith('y');
   } finally {
     rl.close();
   }
-  return project;
+  return { project, setup: setUp };
 }
 
 async function setup(): Promise<void> {
@@ -482,7 +492,7 @@ function loginName(): string | undefined {
 async function exploreLive(project: Project, url: string): Promise<void> {
   const embedder = createEmbeddingProvider(project.config.embedder, join(storageDir(project), 'models'), progress());
   const engine = engineDeps(project, embedder);
-  const { run, sets, noRepoScanned } = await exploreProject(project, { url, as: loginName(), headed: values.headed }, engine, (line) => console.log(line));
+  const { run, sets, noRepoScanned } = await exploreProject(project, { url, as: loginName(), headed: values.headed, allowWrites: values['allow-writes'], allowDestructive: values['allow-destructive'] }, engine, (line) => console.log(line));
   if (noRepoScanned) console.log('no repo is scanned yet: pages are grouped by guessed ids, and nothing is cross-checked; run "flows scan" first');
   for (const line of runLines(run)) console.log(line);
   for (const { repo, set } of sets) {
@@ -638,7 +648,12 @@ async function run(): Promise<void> {
     case 'init': {
       let project = initProject(root, values.name ?? basename(root));
       console.log(`created ${join(root, '.flows', 'config.json')} (project ${project.config.id})`);
-      if (process.stdin.isTTY && process.stdout.isTTY) project = await askFirstRun(project);
+      if (process.stdin.isTTY && process.stdout.isTTY) {
+        const asked = await askFirstRun(project);
+        project = asked.project;
+        if (asked.setup) await setup();
+        else console.log('run "flows setup" before the first scan to download the models');
+      }
       return;
     }
     case 'repo add': {
@@ -698,11 +713,25 @@ async function run(): Promise<void> {
       const exported = exportFlows(sets.flatMap((set) => set ?? []), categories(project.config), false);
       const name = loginName();
       const saved = name === undefined ? undefined : sessionFile(project, name);
-      const results = await verifyLocators(exported.flows, new URL(sub), { browser: project.config.explorer.browser, storageState: saved !== undefined && existsSync(saved) ? saved : undefined, safe: project.config.explorer.safe_requests });
+      const results = await verifyLocators(exported.flows, new URL(sub), { browser: project.config.explorer.browser, storageState: saved !== undefined && existsSync(saved) ? saved : undefined, safe: project.config.explorer.safe_requests, log: console.log });
       saveChecks(project, { ...loadChecks(project), ...checksOf(results) });
-      for (const r of results) console.log(`${r.result.padEnd(9)} ${r.page}  ${r.selector}${r.note === undefined ? '' : `  (${r.note})`}`);
+      for (const r of results) console.log(`${r.result.padEnd(9)} ${r.page}  ${r.selector}${r.after === undefined ? '' : `  (after clicking ${r.after.join(', ')})`}${r.note === undefined ? '' : `  (${r.note})`}`);
       const count = (what: string) => results.filter((r) => r.result === what).length;
       console.log(`${count('verified')} verified, ${count('missing')} missing, ${count('ambiguous')} ambiguous, ${count('skipped')} skipped; "flows export" now carries these`);
+      return;
+    }
+    case 'runs': {
+      // The live runs by origin: an old staging run keeps feeding the flows until it is dropped.
+      const project = loadProject(root);
+      const runs = loadRuns(project);
+      if (values.drop !== undefined) {
+        const gone = runs.filter((run) => run.origin === values.drop);
+        for (const run of gone) rmSync(runDir(project, run.id), { recursive: true, force: true });
+        console.log(`dropped ${gone.length} run(s) of ${values.drop}; run "flows scan" to rebuild the flows`);
+        return;
+      }
+      for (const run of runs) console.log(`${run.id}  ${run.origin}  ${run.session ?? 'signed out'}  ${run.states.length} pages`);
+      if (runs.length === 0) console.log('no live runs yet');
       return;
     }
     case 'explore':
@@ -755,7 +784,24 @@ async function run(): Promise<void> {
       return showJobs(loadProject(root));
     case 'answer': {
       const [answer] = rest;
-      if (!sub || answer === undefined) throw new FlowsError("usage: flows answer <job-id> '<json>'");
+      if (values.file !== undefined) {
+        // Many at once: a JSON file of {"<job-id>": <answer>} (or a list of [id, answer] pairs), as `flows jobs --json` ids.
+        const given = JSON.parse(readFileSync(resolve(values.file), 'utf8')) as Record<string, unknown> | [string, unknown][];
+        const pairs = Array.isArray(given) ? given : Object.entries(given);
+        const file = jobsFile(loadProject(root));
+        let kept = 0;
+        for (const [id, each] of pairs) {
+          try {
+            answerJob(file, id, JSON.stringify(each));
+            kept++;
+          } catch (error) {
+            console.log(`${id}: ${(error as Error).message}`);
+          }
+        }
+        console.log(`kept ${kept} of ${pairs.length} answers; run "flows scan" to check them and use them`);
+        return;
+      }
+      if (!sub || answer === undefined) throw new FlowsError("usage: flows answer <job-id> '<json>'  or  flows answer --file <answers.json>");
       answerJob(jobsFile(loadProject(root)), sub, answer);
       console.log(`kept the answer to ${sub}; run "flows scan" to check it and use it`);
       return;

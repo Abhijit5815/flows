@@ -69,8 +69,8 @@ export const StepSchema = z
     action: z
       .object({
         kind: z.enum(['submit', 'click']),
-        fields: z.array(z.object({ name: z.string().min(1), selector: z.string().min(1), locator: LocatorSchema.optional() })),
-        button: z.object({ text: z.string().min(1), selector: z.string().min(1), locator: LocatorSchema.optional() }).optional(),
+        fields: z.array(z.object({ name: z.string().min(1), selector: z.string().min(1), locator: LocatorSchema.optional(), after: z.array(z.string()).optional() })),
+        button: z.object({ text: z.string().min(1), selector: z.string().min(1), locator: LocatorSchema.optional(), after: z.array(z.string()).optional() }).optional(),
       })
       .optional(),
     // The parameters in a step's path (/orders/:orderId, /products/[id]): their type, and an example value when a live
@@ -83,6 +83,11 @@ export const StepSchema = z
     answered_by: z.object({ flow: z.string().min(1), evidence: EvidenceListSchema }).optional(),
     // Export only, with live runs: whether the running app showed this step (a blocked write never does).
     observed: z.boolean().optional(),
+    // Export only: the logins whose live run showed it ("innovator"; "signed out"), what a real answer looked like, and
+    // how to get an id the path needs (create one, or list and pick one).
+    observed_as: z.array(z.string()).optional(),
+    response_example: z.unknown().optional(),
+    setup: z.array(z.object({ param: z.string().min(1), create: z.string().optional(), body: z.record(z.string(), z.unknown()).optional(), list: z.string().optional() })).optional(),
     enabled: z.boolean(),
     subflow_ref: z.string().min(1).optional(),
   })

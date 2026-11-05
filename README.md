@@ -4,7 +4,7 @@ Flows reads your app's source code and lists its **user flows and API flows** ("
 each step with the code behind it. You review them on a local page, then export them as JSON for a test tool.
 Flows itself writes and runs no tests, and never runs your code.
 
-![The review page: flows on a canvas, a flow's steps and evidence, and the table view](docs/review.gif)
+![The review page: flows on a canvas, a flow's steps and evidence, and the table view](https://raw.githubusercontent.com/Abhijit5815/flows/main/docs/review.gif)
 
 Supported: Next.js 14, 15 and 16 (App Router) for the web app; for the API, Express 4 and 5 (TypeScript or
 JavaScript, including routing-controllers' decorator controllers), NestJS, and a Next.js app's own API routes
@@ -81,6 +81,9 @@ changes are saved in each repo's `.flows/` folder, so they go into version contr
 | `flows explore <url>` | Visit the running app read-only (every write is blocked) and cross-check it with the source. |
 | `flows login <url> --as <name>` | Log in once by hand; `explore --as <name>` reuses the session. |
 | `flows verify-locators <url> [--as <name>]` | Open each page the flows act on (plain GETs, read-only) and check every exported selector finds exactly one element. `flows export` then marks each one. |
+| `flows explore <url> --allow-writes [--allow-destructive]` | On a **test host only** (localhost, `*.localhost`, `*.test`, or hosts in `explorer.test_hosts`), let the app's writes through so the explorer reaches the pages and answers behind them. Safe actions only unless you add `--allow-destructive`. Other origins stay blocked. If the config has `explorer.reset` (a command that puts your test data back), it runs before and after. |
+| `flows runs [--drop <origin>]` | List the live runs by origin; drop the ones of an origin (a stale staging run), then scan again. |
+| `flows answer --file answers.json` | Keep many AI answers at once: `{"<job-id>": <answer>, ...}`. |
 | `flows inspect` | Use the app by hand in a browser window, for what the explorer can't reach. |
 | `flows eval`, `flows cost` | The Decider's accuracy and drift; LLM calls and tokens per run. |
 
@@ -109,7 +112,13 @@ says where its selector came from, in `locator`:
 | `ambiguous` | Several elements match; Playwright's strict mode would refuse it. |
 | `missing` | The page loaded and the element was not there. Fix it before relying on it. |
 
-With live runs, each step also has `observed`. The explorer never writes, so a step behind a write (the page after
+A field or button can also carry `after`: the selectors to click first, in order, because the control only appears
+after them (a tab, a "Sign up with email" button). `verify-locators` finds these by pressing each harmless button
+on the page once, and counts only elements a test could see.
+
+With live runs, each step also has `observed`, `observed_as` (the logins whose run showed it: "innovator",
+"funder"), and for an API call a real `response_example`. A path with an id (`/ideas/:ideaId/...`) gets `setup`:
+the route that creates one (with an example body) and the one that lists them. The explorer never writes, so a step behind a write (the page after
 "place order") reads `observed: false` until you walk it once by hand with `flows inspect` (or `flows ui`, "Live
 app"). That walk records the real pages and selectors, and the next export uses them.
 

@@ -14,6 +14,7 @@ import { labelNoise, siteOf } from './noise.ts';
 import { bestMatch, generalize, pageRegex } from './paths.ts';
 import { guardReadOnly } from './readonly.ts';
 import { redactPath, redactUrl } from './redact.ts';
+import { isTestHost } from './writes.ts';
 import { newRunId, type Action, type Run, type State } from './run.ts';
 import type { Snapshot } from './snapshot.ts';
 import type { SourceTexts } from './texts.ts';
@@ -27,6 +28,8 @@ export type ExploreInput = {
   pages: readonly string[]; // the web repos' page patterns, so /user/ana and /user/bo are one page
   source?: SourceTexts; // what the gate rates for a control that matches source (texts.ts)
   headless: boolean;
+  allowWrites?: boolean; // writes to the start URL's origin reach the app (writes.ts checks it is a test host first)
+  allowDestructive?: boolean; // with allowWrites: actions rated destructive are taken too
 };
 
 export type ExploreDeps = { decider: Decider; llm: OptionalLlm; config: ExplorerConfig; runDir(id: string): string; log(line: string): void };
@@ -75,10 +78,10 @@ export async function explore(input: ExploreInput, deps: ExploreDeps): Promise<R
   mkdirSync(dir, { recursive: true });
   const started = new Date().toISOString();
   const { browser, name } = await launchBrowser(deps.config.browser, input.headless);
-  const notes: string[] = [];
+  const notes: string[] = input.allowWrites === true ? [`writes to test hosts were allowed${input.allowDestructive === true ? ', destructive ones too' : ''}`] : [];
   try {
     const context = await newContext(browser, input.storageState);
-    const guard = await guardReadOnly(context, deps.config.safe_requests);
+    const guard = await guardReadOnly(context, deps.config.safe_requests, input.allowWrites === true ? (url) => isTestHost(url.hostname, deps.config.test_hosts) : undefined);
     const recorder = new Recorder(context, siteOf(start.hostname), guard);
     const page = await context.newPage();
     context.on('page', (other) => {
@@ -224,7 +227,7 @@ export async function explore(input: ExploreInput, deps: ExploreDeps): Promise<R
       for (const candidate of candidatesOf(state, start.origin, patternOf, input.source)) {
         if (decided.has(candidate.key)) continue;
         decided.add(candidate.key);
-        const { decision, taken } = await gate(candidate, state, { decider: deps.decider, minSafeProb: deps.config.min_safe_prob, origin: start.origin });
+        const { decision, taken } = await gate(candidate, state, { decider: deps.decider, minSafeProb: deps.config.min_safe_prob, origin: start.origin, allowDestructive: input.allowWrites === true && input.allowDestructive === true });
         const next: Action = { n: actions.length, state: state.n, kind: candidate.kind, element: candidate.element, text: candidate.rated.join(' | '), fields: candidate.fields, decision, taken, result: null };
         actions.push(next);
         if (!taken) continue;

@@ -24,7 +24,9 @@ const encodings = (password: string): string[] => [password, JSON.stringify(pass
 // routed socket only when asked to). Service workers must be blocked on the context too (browser.ts), because
 // route() can't see the requests they handle. The one write let through is the login submit with env credentials.
 // safe: "METHOD /path" requests the app makes that change no data (refreshing a session token), named by the project.
-export async function guardReadOnly(context: BrowserContext, safe: readonly string[] = []): Promise<Guard> {
+// allowWrite: a run that may write (writes.ts) lets writes through to the hosts it accepts (the test hosts, which
+// includes the app's own API on another port); everything else stays blocked.
+export async function guardReadOnly(context: BrowserContext, safe: readonly string[] = [], allowWrite?: (url: URL) => boolean): Promise<Guard> {
   let login: string[] = [];
   const records = new WeakMap<Request, BlockedWrite>();
   const guard: Guard = {
@@ -43,7 +45,7 @@ export async function guardReadOnly(context: BrowserContext, safe: readonly stri
   const isLogin = (body: string | null) => body !== null && login.some((form) => form !== '' && body.includes(form));
   await context.route('**/*', async (route) => {
     const request = route.request();
-    if (SAFE_METHODS.has(request.method()) || isLogin(request.postData()) || safe.includes(`${request.method()} ${new URL(request.url()).pathname}`)) return route.continue();
+    if (SAFE_METHODS.has(request.method()) || isLogin(request.postData()) || safe.includes(`${request.method()} ${new URL(request.url()).pathname}`) || (allowWrite !== undefined && allowWrite(new URL(request.url())))) return route.continue();
     const write = { method: request.method(), url: redactUrl(request.url()), resource: request.resourceType(), shape: bodyShape(request.postData(), request.headers()['content-type']), at: Date.now() };
     guard.blocked.push(write);
     records.set(request, write);

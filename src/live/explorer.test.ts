@@ -37,7 +37,7 @@ const decider: Decider = {
     return answer('safe', 0.95);
   },
 };
-const config: ExplorerConfig = { max_pages: 30, max_depth: 3, min_safe_prob: 0.8, logins: {}, safe_requests: [] };
+const config: ExplorerConfig = { max_pages: 30, max_depth: 3, min_safe_prob: 0.8, logins: {}, safe_requests: [], test_hosts: [] };
 const deps = { decider, llm: new OptionalLlm(undefined, join(tmp, 'llm.json'), () => undefined), config, runDir: (id: string) => join(tmp, id), log: () => undefined };
 const input = (overrides: Partial<ExploreInput> = {}): ExploreInput => ({
   url: site.url,
@@ -101,4 +101,14 @@ test('a login that fails says so, and a run never invents credentials', { skip: 
 
 test('the URL must be an http or https URL', async () => {
   await assert.rejects(explore({ url: 'file:///etc/passwd', session: null, storageState: undefined, credentials: undefined, saveSessionTo: undefined, pages: [], headless: true }, deps), (error) => error instanceof LiveError);
+});
+
+test('with writes allowed, a safe write reaches the app and a destructive one still does not', { skip: browserSkip }, async () => {
+  const before = site.writes.length;
+  const sessionFile = join(tmp, 'sessions', 'tester.json');
+  const run = await explore(input({ session: 'tester', storageState: sessionFile, allowWrites: true }), deps);
+  const reached = site.writes.slice(before);
+  assert.ok(reached.includes('POST /api/cart/items'), `add to cart reached the app: ${reached.join(', ')}`);
+  assert.ok(!reached.some((write) => /DELETE|\/api\/me\/delete|cancel/i.test(write)), `nothing destructive: ${reached.join(', ')}`);
+  assert.ok(run.notes.some((note) => note.startsWith("writes to ") && !note.includes('destructive')));
 });

@@ -278,7 +278,7 @@ function extract({ facts, files, read, resolver, graph, guards }: ExtractContext
     // A rate limiter's numbers (rateLimitPerUser('idea-post', 5, 86400)) are what a test needs to hit or avoid it; one node per call.
     const limitArgs = RATE_LIMIT.test(base) && Node.isCallExpression(node) ? node.getArguments().map((arg) => resolver.string(arg, env) ?? sum(arg, env)) : [];
     // Arguments that are code (a key function) are left out; the literal ones stay.
-    const limit = limitArgs.some((arg) => typeof arg === 'number') ? limitArgs.filter((arg) => arg !== undefined).join(', ') : undefined;
+    const limit = limitArgs.some((arg) => /^\d+$/.test(String(arg))) ? limitArgs.filter((arg) => arg !== undefined).join(', ') : undefined;
     const owner = graph.add(fixed.length === 0 && limit === undefined ? keyOf(declaration) : `${keyOf(declaration)}(${fixed.join(',')}${limit ?? ''})`, { kind: guard ? 'guard' : 'middleware', name, ...where, attrs: { name, ...(carries === undefined ? {} : { carries }), ...(limit === undefined ? {} : { limit }) } });
     graph.edge(route, owner, guard ? 'guarded-by' : 'uses');
     if (!responded.has(owner)) {

@@ -397,7 +397,8 @@ function extract({ facts, files, read, resolver, graph, guards }: ExtractContext
       }
       note(entry.when, messages, conditionOf(made));
     }
-    if (depth > 0) return;
+    // Two calls away: handler, the service it calls, and the check the service makes (this.requirePremium(userId)).
+    if (depth > 1) return;
     for (const call of fn.getDescendantsOfKind(SyntaxKind.CallExpression)) {
       const callee = call.getExpression();
       const name = Node.isPropertyAccessExpression(callee) ? callee.getNameNode() : callee;

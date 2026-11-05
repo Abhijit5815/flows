@@ -211,3 +211,27 @@ app.listen(3000);
   const limits = graph?.nodes.flatMap((node) => ((node.kind === 'guard' || node.kind === 'middleware') && node.attrs.limit !== undefined ? [node.attrs.limit] : []));
   assert.deepEqual(limits?.sort(), ['idea-post, 5, 86400', 'join, 3, 3600']);
 });
+
+test('an error thrown by a check the service calls (this.requirePremium) is an error of the route', async () => {
+  const dir = join(tmp, 'deep-error-app');
+  mkdirSync(join(dir, 'src'), { recursive: true });
+  writeFileSync(join(dir, 'package.json'), JSON.stringify({ dependencies: { express: '^4.19.2' } }));
+  writeFileSync(
+    join(dir, 'src', 'server.ts'),
+    `import express from 'express';
+class ApiError extends Error { constructor(public status: number, public code: string, message: string) { super(message); } }
+class BoardService {
+  async create(userId: string) { await this.requirePremium(userId); return { id: 1 }; }
+  private async requirePremium(userId: string) { if (userId !== 'vip') throw new ApiError(403, 'premium_required', 'Premium only'); }
+}
+const board = new BoardService();
+const app = express();
+app.post('/requests', async (req, res, next) => { try { res.status(201).json(await board.create('x')); } catch (err) { next(err); } });
+app.listen(3000);
+`,
+  );
+  const project = tempProject(join(tmp, 'deep-error'));
+  const { graph } = await scanRepo(project, addRepo(project, dir, 'api').config.repos[0]);
+  const statuses = graph?.nodes.flatMap((node) => (node.kind === 'response' ? [node.attrs.status] : []));
+  assert.ok(statuses?.includes(403), 'the 403 two calls down is found');
+});

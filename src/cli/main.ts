@@ -2,9 +2,10 @@ import { spawn } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { basename, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createInterface } from 'node:readline/promises';
 import { parseArgs } from 'node:util';
 import { ADAPTERS, adapterFor } from '../adapters/registry.ts';
-import { addRepo, categories, configFile, defaultStorageDir, findRepo, initProject, loadProject, LoginNameSchema, projectDataDir, setFramework, storageDir, threshold, type Project, type Repo } from '../config/project.ts';
+import { addRepo, categories, configFile, defaultStorageDir, findRepo, initProject, loadProject, LoginNameSchema, projectDataDir, setFramework, setLlm, storageDir, threshold, type Project, type Repo } from '../config/project.ts';
 import { createDecider, createGrounding } from '../decider/create.ts';
 import { DeciderV1 } from '../decider/decider.ts';
 import { drift, evaluateTask, MIN_OVERRIDES } from '../decider/eval.ts';
@@ -46,7 +47,7 @@ import { startUi } from '../ui/server.ts';
 
 const USAGE = `usage: flows <command> [--project <dir>]
   setup                                    download the models ahead of time (checksummed) and look for a browser
-  init [--name <name>]                     create .flows/config.json in the project folder
+  init [--name <name>]                     create .flows/config.json; on a terminal, asks which LLM and which repos
   repo add <path> --role web|api           register a repo folder under a role
   repo list
   stack                                    the framework found for each repo, and why
@@ -275,6 +276,38 @@ function costLine(run: RunCost): string {
 
 // PLAN.md Phase 7 setup: download the models ahead of time (some coding assistants block the network in their
 // sandbox), checksummed, and say whether the explorer has a browser to drive. Works with or without a project.
+// First run on a terminal: which LLM, then the repos. Keys are never asked for, only the variable that holds them.
+// Anything unanswered keeps the default (a local Ollama) and can be changed later on the review page or with `flows repo add`.
+async function askFirstRun(project: Project): Promise<Project> {
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  const ask = async (question: string, fallback = ''): Promise<string> => (await rl.question(fallback ? `${question} [${fallback}] ` : `${question} `)).trim() || fallback;
+  try {
+    const choice = await ask('Which LLM names and sorts the flows? 1 local Ollama, 2 a coding assistant (Claude Code), 3 Anthropic API, 4 Gemini API, 5 other OpenAI-compatible', '1');
+    let llm: object | undefined;
+    if (choice === '2') llm = { provider: 'assistant' };
+    else if (choice === '3') llm = { provider: 'anthropic' };
+    else if (choice === '4') llm = { provider: 'gemini', api_key_env: await ask('Environment variable holding the key', 'GEMINI_API_KEY') };
+    else if (choice === '5') {
+      const key = await ask('Environment variable holding the key (blank for none)');
+      llm = { provider: 'openai-compatible', base_url: await ask('Base URL', 'http://localhost:11434/v1'), model: await ask('Model'), ...(key ? { api_key_env: key } : {}) };
+    }
+    if (llm !== undefined) project = setLlm(project, llm);
+    for (;;) {
+      const path = await ask('Add a repo folder (blank to finish):');
+      if (!path) break;
+      const role = await ask('Is it the web app or the api?', 'web');
+      try {
+        project = addRepo(project, path, role);
+      } catch (error) {
+        console.log((error as Error).message);
+      }
+    }
+  } finally {
+    rl.close();
+  }
+  return project;
+}
+
 async function setup(): Promise<void> {
   const project = existsSync(configFile(root)) ? loadProject(root) : undefined;
   const models = join(project === undefined ? defaultStorageDir() : storageDir(project), 'models');
@@ -574,8 +607,9 @@ async function run(): Promise<void> {
     case 'setup':
       return await setup();
     case 'init': {
-      const project = initProject(root, values.name ?? basename(root));
+      let project = initProject(root, values.name ?? basename(root));
       console.log(`created ${join(root, '.flows', 'config.json')} (project ${project.config.id})`);
+      if (process.stdin.isTTY && process.stdout.isTTY) project = await askFirstRun(project);
       return;
     }
     case 'repo add': {

@@ -276,22 +276,47 @@ function costLine(run: RunCost): string {
 
 // PLAN.md Phase 7 setup: download the models ahead of time (some coding assistants block the network in their
 // sandbox), checksummed, and say whether the explorer has a browser to drive. Works with or without a project.
+// Models a local server already has: Ollama and LM Studio on their usual ports. Nothing found is a normal answer.
+async function localModels(): Promise<{ base_url: string; model: string }[]> {
+  const servers = [
+    { base_url: 'http://localhost:11434/v1', url: 'http://localhost:11434/api/tags', names: (j: any) => (j.models ?? []).map((m: any) => m.name) },
+    { base_url: 'http://localhost:1234/v1', url: 'http://localhost:1234/v1/models', names: (j: any) => (j.data ?? []).map((m: any) => m.id) },
+  ];
+  const found = await Promise.all(servers.map(async (server) => {
+    try {
+      const response = await fetch(server.url, { signal: AbortSignal.timeout(1500) });
+      return (server.names(await response.json()) as string[]).map((model) => ({ base_url: server.base_url, model }));
+    } catch {
+      return [];
+    }
+  }));
+  return found.flat();
+}
+
 // First run on a terminal: which LLM, then the repos. Keys are never asked for, only the variable that holds them.
-// Anything unanswered keeps the default (a local Ollama) and can be changed later on the review page or with `flows repo add`.
+// Without an answer the config keeps its default, which may not exist on this machine; the review page can change it later.
 async function askFirstRun(project: Project): Promise<Project> {
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   const ask = async (question: string, fallback = ''): Promise<string> => (await rl.question(fallback ? `${question} [${fallback}] ` : `${question} `)).trim() || fallback;
   try {
-    const choice = await ask('Which LLM names and sorts the flows? 1 local Ollama, 2 a coding assistant (Claude Code), 3 Anthropic API, 4 Gemini API, 5 other OpenAI-compatible', '1');
-    let llm: object | undefined;
-    if (choice === '2') llm = { provider: 'assistant' };
-    else if (choice === '3') llm = { provider: 'anthropic' };
-    else if (choice === '4') llm = { provider: 'gemini', api_key_env: await ask('Environment variable holding the key', 'GEMINI_API_KEY') };
-    else if (choice === '5') {
-      const key = await ask('Environment variable holding the key (blank for none)');
-      llm = { provider: 'openai-compatible', base_url: await ask('Base URL', 'http://localhost:11434/v1'), model: await ask('Model'), ...(key ? { api_key_env: key } : {}) };
-    }
-    if (llm !== undefined) project = setLlm(project, llm);
+    const local = await localModels();
+    const options: { label: string; llm: () => Promise<object> }[] = [
+      { label: 'a coding assistant such as Claude Code (no API)', llm: async () => ({ provider: 'assistant' }) },
+      ...local.map((m) => ({ label: `${m.model} (local, ${m.base_url})`, llm: async () => ({ provider: 'openai-compatible', ...m }) })),
+      { label: 'Anthropic API', llm: async () => ({ provider: 'anthropic' }) },
+      { label: 'Gemini API', llm: async () => ({ provider: 'gemini', api_key_env: await ask('Environment variable holding the key', 'GEMINI_API_KEY') }) },
+      {
+        label: 'another OpenAI-compatible server',
+        llm: async () => {
+          const key = await ask('Environment variable holding the key (blank for none)');
+          return { provider: 'openai-compatible', base_url: await ask('Base URL'), model: await ask('Model'), ...(key ? { api_key_env: key } : {}) };
+        },
+      },
+    ];
+    console.log(local.length === 0 ? 'No local model server found on the usual ports.' : `Found ${local.length} local model(s).`);
+    options.forEach((o, i) => console.log(`  ${i + 1}. ${o.label}`));
+    const picked = options[Number(await ask('Which LLM names and sorts the flows? (blank to decide later)')) - 1];
+    if (picked !== undefined) project = setLlm(project, await picked.llm());
     for (;;) {
       const path = await ask('Add a repo folder (blank to finish):');
       if (!path) break;

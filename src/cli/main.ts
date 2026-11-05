@@ -32,6 +32,8 @@ import { isSource } from '../ingest/match.ts';
 import { CoverageSchema, scanRepo } from '../ingest/pipeline.ts';
 import { checksOf, loadChecks, saveChecks, verifyLocators } from '../live/locators.ts';
 import { loginByHand, sessionFile } from '../live/login.ts';
+import { createdIn } from '../live/ledger.ts';
+import { runReset } from '../live/writes.ts';
 import { loadRuns, runDir } from '../live/run.ts';
 import { crossCheckLines, runLines } from '../live/report.ts';
 import { exploreProject, walkInInspector } from '../live/walk.ts';
@@ -64,7 +66,8 @@ const USAGE = `usage: flows <command> [--project <dir>]
   review <flow-id> correct|wrong|never [--comment <text>] [--repo <path>]   a reviewer's verdict (never: don't
                                            suggest it again), kept in the repo's rules; the next scan applies it
                                            (--repo when two repos have that id)
-  runs [--drop <origin>]                   list the live runs by origin, or drop the ones of an origin (a stale staging run)
+  runs [--writes] [--drop <origin>]        list the live runs, what the runs that wrote changed, or drop one origin's runs
+  cleanup [--yes]                          run explorer.cleanup with the list of what Flows wrote (Flows deletes nothing itself)
   verify-locators <url> [--as <name>]      open each page the flows act on (read-only) and check every exported selector finds one element
   explore <url> [--as <name>] [--headed]   explore the live app read-only (writes never reach it), then cross-check
            [--allow-writes [--allow-destructive]]  on a test host only (localhost, *.test, explorer.test_hosts): let writes through,
@@ -126,6 +129,8 @@ const parsed = (() => {
     flow: { type: 'string' },
     'base-url': { type: 'string' },
     drop: { type: 'string' },
+    writes: { type: 'boolean', default: false },
+    yes: { type: 'boolean', default: false },
     file: { type: 'string' },
     'allow-writes': { type: 'boolean', default: false },
     'allow-destructive': { type: 'boolean', default: false },
@@ -720,6 +725,33 @@ async function run(): Promise<void> {
       console.log(`${count('verified')} verified, ${count('missing')} missing, ${count('ambiguous')} ambiguous, ${count('skipped')} skipped; "flows export" now carries these`);
       return;
     }
+    case 'cleanup': {
+      // Hands the project's own cleanup command the list of what Flows wrote, and nothing else. Flows deletes nothing itself.
+      const project = loadProject(root);
+      const created = loadRuns(project).flatMap(createdIn);
+      if (created.length === 0) {
+        console.log('no run of this project wrote anything to an app; nothing to clean up');
+        return;
+      }
+      const ledger = join(projectDataDir(project), 'ledger.json');
+      writeJsonAtomic(ledger, created, 2);
+      const command = project.config.explorer.cleanup;
+      console.log(`${created.length} write(s) by Flows runs, listed in ${ledger}`);
+      if (command === undefined) {
+        console.log('nothing was deleted: set explorer.cleanup to a command that deletes only what that file lists (it gets FLOWS_LEDGER=<the file>), or remove them by hand');
+        return;
+      }
+      if (!values.yes) {
+        if (!process.stdin.isTTY) throw new FlowsError(`this runs "${command}" on the app's data; add --yes to say so`);
+        const rl = createInterface({ input: process.stdin, output: process.stdout });
+        const reply = await rl.question(`Run "${command}" with FLOWS_LEDGER=${ledger}? y/n `);
+        rl.close();
+        if (!reply.trim().toLowerCase().startsWith('y')) return;
+      }
+      await runReset(command, project.root, console.log, { FLOWS_LEDGER: ledger });
+      console.log('cleanup command finished');
+      return;
+    }
     case 'runs': {
       // The live runs by origin: an old staging run keeps feeding the flows until it is dropped.
       const project = loadProject(root);
@@ -728,6 +760,10 @@ async function run(): Promise<void> {
         const gone = runs.filter((run) => run.origin === values.drop);
         for (const run of gone) rmSync(runDir(project, run.id), { recursive: true, force: true });
         console.log(`dropped ${gone.length} run(s) of ${values.drop}; run "flows scan" to rebuild the flows`);
+        return;
+      }
+      if (values.writes) {
+        for (const created of runs.flatMap(createdIn)) console.log(`${created.run}  ${created.method} ${created.path}  ${created.status}${created.id === undefined ? '' : `  id ${created.id}`}`);
         return;
       }
       for (const run of runs) console.log(`${run.id}  ${run.origin}  ${run.session ?? 'signed out'}  ${run.states.length} pages`);

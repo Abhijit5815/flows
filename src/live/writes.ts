@@ -14,10 +14,10 @@ export function requireTestHost(url: string, listed: readonly string[]): void {
 }
 
 // explorer.reset, run in the project folder: the project's own command that puts its test data back.
-export function runReset(command: string, cwd: string, log: (line: string) => void): Promise<void> {
-  log(`running explorer.reset: ${command}`);
+export function runReset(command: string, cwd: string, log: (line: string) => void, env: Record<string, string> = {}): Promise<void> {
+  log(`running: ${command}`);
   return new Promise((done, fail) => {
-    const child = spawn(command, { cwd, shell: true, stdio: 'ignore' });
+    const child = spawn(command, { cwd, shell: true, stdio: 'ignore', env: { ...process.env, ...env } });
     child.on('error', fail);
     child.on('exit', (code) => (code === 0 ? done() : fail(new LiveError(`explorer.reset "${command}" exited with ${code}`))));
   });

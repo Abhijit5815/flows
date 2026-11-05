@@ -106,6 +106,10 @@ export const ProjectConfigSchema = z.object({
       // puts the test data back (run before and after a run that writes).
       test_hosts: z.array(z.string().min(1)).default([]),
       reset: z.string().min(1).optional(),
+      // Typed text starts with this on a run that writes, so what Flows made can be told from what a person made. The list
+      // of what it wrote is `flows runs --writes`; `cleanup` is the project's own command that deletes exactly that list.
+      test_prefix: z.string().default('Test Flows '),
+      cleanup: z.string().min(1).optional(),
       safe_requests: z.array(z.string().regex(/^(POST|PUT|PATCH|DELETE) \/\S*$/, 'write it as "POST /path"')).default([]),
     })
     .prefault({}),

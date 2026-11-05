@@ -11,7 +11,7 @@ const today = () => new Date().toISOString().slice(0, 10);
 // A value each kind of field accepts, from its type alone (PLAN.md Phase 3: rules first). Undefined leaves the field
 // as the page set it: hidden fields, choices, and anything secret. Writes never reach the app (readonly.ts), so these
 // values only have to pass the browser's own checks.
-export function ruleValue(field: Pick<Field, 'type' | 'options'>): string | undefined {
+export function ruleValue(field: Pick<Field, 'type' | 'options'>, prefix = ''): string | undefined {
   switch (field.type) {
     case 'hidden':
     case 'checkbox':
@@ -43,7 +43,7 @@ export function ruleValue(field: Pick<Field, 'type' | 'options'>): string | unde
     case 'color':
       return '#336699';
     default:
-      return 'test';
+      return `${prefix}test`; // plain text: marked, so a cleanup can tell it from a person's
   }
 }
 
@@ -79,9 +79,9 @@ export type Filled = { ok: true } | { ok: false; reason: string };
 // Fills the form by rule, then asks the LLM only for the fields the browser still rejects (PLAN.md Phase 3: the LLM is
 // only for ambiguous forms), and keeps an answer only if the browser accepts it. With the assistant provider the
 // question becomes a job, and the form is tried again on the next run.
-export async function fillForm(form: Locator, fields: readonly Field[], llm: OptionalLlm): Promise<Filled> {
+export async function fillForm(form: Locator, fields: readonly Field[], llm: OptionalLlm, prefix = ''): Promise<Filled> {
   for (const field of fields) {
-    const value = field.visible ? ruleValue(field) : undefined;
+    const value = field.visible ? ruleValue(field, prefix) : undefined;
     if (value !== undefined) await fill(form, field.name, field.type, value).catch(() => undefined);
   }
   const rejected = await invalid(form);
@@ -89,10 +89,16 @@ export async function fillForm(form: Locator, fields: readonly Field[], llm: Opt
   const facts = rejected.map((field) => ({ ...field, label: redactText(field.label), message: redactText(field.message) }));
   const reply = await llm.ask({ purpose: 'form-values', system: SYSTEM, prompt: JSON.stringify(facts), schema: ValuesSchema });
   if (reply === undefined) return { ok: false, reason: `the browser rejects ${rejected.map((field) => field.name).join(', ')}, and no LLM answer is available${llm.pending > 0 ? ' yet (see "flows jobs")' : ''}` };
+  const marked = (field: { type: string }, value: string) => (prefix !== '' && ['text', 'textarea', 'search', ''].includes(field.type) && !value.startsWith(prefix) ? `${prefix}${value}` : value);
   for (const field of rejected) {
     const value = reply.values[field.name];
-    if (value !== undefined) await fill(form, field.name, field.type, value).catch(() => undefined);
+    if (value !== undefined) await fill(form, field.name, field.type, marked(field, value)).catch(() => undefined);
   }
-  const still = await invalid(form);
+  let still = await invalid(form);
+  if (still.length > 0 && prefix !== '') {
+    // The marker broke a pattern or a length limit: the plain answers are kept instead, and the browser decides.
+    for (const field of rejected) if (reply.values[field.name] !== undefined) await fill(form, field.name, field.type, reply.values[field.name]).catch(() => undefined);
+    still = await invalid(form);
+  }
   return still.length === 0 ? { ok: true } : { ok: false, reason: `the browser still rejects ${still.map((field) => field.name).join(', ')} after the LLM's values` };
 }

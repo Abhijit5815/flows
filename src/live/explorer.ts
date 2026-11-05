@@ -161,7 +161,7 @@ export async function explore(input: ExploreInput, deps: ExploreDeps): Promise<R
         const before = recorder.requests.length;
         const shown = last ? await fingerprint(page) : 0;
         if (last) where(action.state, action.n);
-        const done = await perform(page, action, states[action.state], deps.llm);
+        const done = await perform(page, action, states[action.state], deps.llm, input.allowWrites === true ? deps.config.test_prefix : '');
         if (!done.ok) return { ok: false, why: `couldn't repeat "${action.element.text}": ${done.why}` };
         await settle();
         if (last) return { ok: true, mark: before, changed: shown !== (await fingerprint(page)) };
@@ -270,13 +270,13 @@ export async function explore(input: ExploreInput, deps: ExploreDeps): Promise<R
 }
 
 // Performs one action on the page as it is now: follows a link, clicks a control, or fills in and submits a form.
-async function perform(page: Page, action: Action, state: State, llm: OptionalLlm): Promise<{ ok: true } | { ok: false; why: string }> {
+async function perform(page: Page, action: Action, state: State, llm: OptionalLlm, prefix: string): Promise<{ ok: true } | { ok: false; why: string }> {
   try {
     if (action.kind === 'submit') {
       const form = state.forms.find((candidate) => candidate.submit?.selector === action.element.selector || candidate.selector === action.element.selector);
       if (form === undefined) return { ok: false, why: 'its form is gone' };
       const element = locate(page, form.selector);
-      const filled = await fillForm(element, form.fields, llm);
+      const filled = await fillForm(element, form.fields, llm, prefix);
       if (!filled.ok) return { ok: false, why: filled.reason };
       if (form.submit !== null) await locate(page, form.submit.selector).click({ timeout: STEP_TIMEOUT });
       else await element.evaluate((node) => (node as HTMLFormElement).requestSubmit());

@@ -24,8 +24,11 @@ npm link
 flows setup
 ```
 
-`flows setup` downloads the models Flows runs locally (about 430 MB, checksum-verified; it then works offline) and
-says whether it found a browser (Chrome, Edge or Playwright's Chromium), which only the live-app commands need.
+`flows setup` is the only time Flows downloads anything. It fetches two small models that run on your CPU: an
+embedding model (`bge-small-en-v1.5`) and an entailment model (`nli-deberta-v3-xsmall`), about 430 MB in all, from
+Hugging Face, each file checked against a checksum. They are kept once per user in `~/.cache/flows/models` (or under
+`FLOWS_HOME`), shared by every project and never put in your repo; after that Flows works offline. `flows setup`
+also says whether it found a browser (Chrome, Edge or Playwright's Chromium), which only the live-app commands need.
 To update: `git pull && npm install && npm run build`.
 
 ## Use it on your app
@@ -103,8 +106,12 @@ same flow, the later judgment wins; when they edit different fields of one flow,
 
 ## AI and privacy
 
-Flows decides most things itself, with a small local embedding model. An LLM is used only for flow names,
-descriptions and the categories the local model can't decide, and every answer is checked against the code.
+Flows decides most things itself with those two small local models, so nothing leaves your machine for that. The
+embedding model compares a piece of text with labelled examples to answer closed questions ("is this button
+destructive or safe?", "is this request noise?"), finds code that looks like a flow but wasn't picked up, and
+matches a description you type to the code. The entailment model checks that a claim follows from its evidence. An
+LLM is used only for flow names, descriptions and the categories the local models can't decide, and every answer
+is checked against the code.
 
 - Inside a coding assistant (`"llm": { "provider": "assistant" }`, chosen in `flows init`), the assistant does
   these jobs (`flows jobs`, `flows answer`) and Flows calls no model at all. `skill/flows/SKILL.md` is the Agent
